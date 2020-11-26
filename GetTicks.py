@@ -4,10 +4,14 @@ import re
 
 if __name__ == "__main__":
     url = 'http://localhost:8080/Ticks'
-    myobj = {'somekey': 'somevalue'}
+
+    contract = {"symbol": "EUR",
+                "secType": "CASH",
+                "currency": "GBP",
+                "exchange": "IDEALPRO"}
 
     pattern = "([0-9]+): Date: ([0-9]+), Open: ([\\-0-9\\.]+), High: ([\\-0-9\\.]+), Low: ([\\-0-9\\.]+), Close: ([\\-0-9\\.]+), Volume: ([\\-0-9\\.]+), Average: ([\\-0-9\\.]+), BarCount: ([\\-0-9\\.]+)"
-    x = requests.post(url, data = myobj)
+    x = requests.post(url, data = contract)
     mt = re.findall(pattern, x.text)
     #print("{}".format(mt))
     for m in mt:

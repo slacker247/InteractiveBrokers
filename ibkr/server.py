@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import time
 import json
 import datetime
+import urllib.parse
 
 from ibapi.common import * # @UnusedWildImport
 from ibapi.contract import * # @UnusedWildImport
@@ -21,14 +22,47 @@ class Server(BaseHTTPRequestHandler):
     IBKApp = None
 
     def do_POST(self):
+        length = int(self.headers['content-length'])
+        field_data = self.rfile.read(length)
+        fields = urllib.parse.parse_qs(str(field_data).replace("b'", "")
+                .replace("['", "")
+                .replace("']", "")
+                .replace('"', "")
+                .replace("'", ""))
+        print("fields: {}".format(fields))
         if self.path == "/Ticks":
             # parse params
             contract = Contract()
-            contract.symbol = "EUR"
-            contract.secType = "CASH"
-            contract.currency = "GBP"
-            contract.exchange = "IDEALPRO"
+            if "symbol" in fields:
+                contract.symbol = str(fields["symbol"][0])
+            if "secType" in fields:
+                contract.secType = str(fields["secType"][0])
+            if "lastTradeDateOrContractMonth" in fields:
+                contract.lastTradeDateOrContractMonth = str(fields["lastTradeDateOrContractMonth"][0])
+            if "strike" in fields:
+                contract.strike = float(fields["strike"][0])
+            if "right" in fields:
+                contract.right = str(fields["right"][0])
+            if "multiplier" in fields:
+                contract.multiplier = str(fields["multiplier"][0])
+            if "exchange" in fields:
+                contract.exchange = str(fields["exchange"][0])
+            if "primaryExchange" in fields:
+                contract.primaryExchange = str(fields["primaryExchange"][0])
+            if "currency" in fields:
+                contract.currency = str(fields["currency"][0])
+            if "localSymbol" in fields:
+                contract.localSymbol = str(fields["localSymbol"][0])
+            if "tradingClass" in fields:
+                contract.tradingClass = str(fields["tradingClass"][0])
+            if "includeExpired" in fields:
+                contract.includeExpired = bool(fields["includeExpired"][0])
+            if "secIdType" in fields:
+                contract.secIdType = str(fields["secIdType"][0])
+            if "secId" in fields:
+                contract.secId = str(fields["secId"][0])
 
+            print("constract: {}".format(contract))
             reqId = 4102
             # queryTime the period for which to get ticks
             queryTime = (datetime.datetime.today() - datetime.timedelta(days=180)).strftime("%Y%m%d %H:%M:%S")

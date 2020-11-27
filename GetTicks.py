@@ -1,3 +1,4 @@
+import datetime
 import requests
 import json
 import re
@@ -8,7 +9,10 @@ if __name__ == "__main__":
     contract = {"symbol": "EUR",
                 "secType": "CASH",
                 "currency": "GBP",
-                "exchange": "IDEALPRO"}
+                "exchange": "IDEALPRO",
+                "durationStr" : "360 D",
+                "endDateTime" : datetime.datetime.today().strftime("%Y%m%d %H:%M:%S")
+                }
 
     pattern = "([0-9]+): Date: ([0-9]+), Open: ([\\-0-9\\.]+), High: ([\\-0-9\\.]+), Low: ([\\-0-9\\.]+), Close: ([\\-0-9\\.]+), Volume: ([\\-0-9\\.]+), Average: ([\\-0-9\\.]+), BarCount: ([\\-0-9\\.]+)"
     x = requests.post(url, data = contract)

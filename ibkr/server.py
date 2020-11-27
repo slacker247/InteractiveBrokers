@@ -33,6 +33,7 @@ class Server(BaseHTTPRequestHandler):
         if self.path == "/Ticks":
             # parse params
             contract = Contract()
+            # this should be in the contract class
             if "symbol" in fields:
                 contract.symbol = str(fields["symbol"][0])
             if "secType" in fields:
@@ -62,13 +63,32 @@ class Server(BaseHTTPRequestHandler):
             if "secId" in fields:
                 contract.secId = str(fields["secId"][0])
 
+            endDateTime = (datetime.datetime.today() - datetime.timedelta(days=180)).strftime("%Y%m%d %H:%M:%S")
+            if "endDateTime" in fields:
+                endDateTime = str(fields["endDateTime"][0])
+            durationStr = "1 M"
+            if "durationStr" in fields:
+                durationStr = str(fields["durationStr"][0])
+            barSizeSetting = "1 day"
+            if "barSizeSetting" in fields:
+                barSizeSetting = str(fields["barSizeSetting"][0])
+            whatToShow = "MIDPOINT"
+            if "whatToShow" in fields:
+                whatToShow = str(fields["whatToShow"][0])
+            useRTH = 1
+            if "useRTH" in fields:
+                useRTH = str(fields["useRTH"][0])
+            formatDate = 1
+            if "formatDate" in fields:
+                formatDate = str(fields["formatDate"][0])
+            
             print("constract: {}".format(contract))
             reqId = 4102
             # queryTime the period for which to get ticks
-            queryTime = (datetime.datetime.today() - datetime.timedelta(days=180)).strftime("%Y%m%d %H:%M:%S")
             self.IBKApp.Msg[reqId] = "running"
-            self.IBKApp.reqHistoricalData(reqId, contract, queryTime,
-                               "1 M", "1 day", "MIDPOINT", 1, 1, False, [])
+            self.IBKApp.reqHistoricalData(reqId, contract, endDateTime,
+                               durationStr, barSizeSetting, whatToShow,
+                               useRTH, formatDate, False, [])
             results = []
             found = False
             timeout = False

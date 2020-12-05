@@ -1081,6 +1081,7 @@ class TestApp(TestWrapper, TestClient):
         print("Symbol Samples. Request Id: ", reqId)
 
         for contractDescription in contractDescriptions:
+            self.Queue.append(contractDescription)
             derivSecTypes = ""
             for derivSecType in contractDescription.derivativeSecTypes:
                 derivSecTypes += derivSecType
@@ -1092,6 +1093,7 @@ class TestApp(TestWrapper, TestClient):
                 contractDescription.contract.secType,
                 contractDescription.contract.primaryExchange,
                 contractDescription.contract.currency, derivSecTypes))
+        self.Msg[reqId] = "success"
     # ! [symbolSamples]
 
     @printWhenExecuting

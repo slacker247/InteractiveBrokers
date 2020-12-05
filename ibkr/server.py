@@ -33,7 +33,7 @@ class Server(BaseHTTPRequestHandler):
                 found = True
             if datetime.datetime.now() - start > datetime.timedelta(minutes=2):
                 timeout = True
-        return found
+        return timeout
 
     def do_POST(self):
         self.send_response(501) # Not Implemented           
@@ -124,13 +124,13 @@ class Server(BaseHTTPRequestHandler):
                 jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
             self.send_response(200)            
             pass
-        if self.path == "/Search":
-            print("Calling Search...")
+        if self.path == "/ContractDetails":
+            print("Calling ContractDetails...")
             contract = Contract()
-            contract.symbol = "FISV"
-            contract.secType = "OPT"
-            contract.currency = "USD"
-            contract.exchange = "SMART"
+            contract.symbol = ""
+            contract.secType = ""
+            contract.currency = ""
+            contract.exchange = ""
             if "symbol" in fields:
                 contract.symbol = str(fields["symbol"][0])
             if "secType" in fields:
@@ -182,6 +182,58 @@ class Server(BaseHTTPRequestHandler):
                     self.Cache[hsh] = jsn
                 elif self.IBKApp.Msg[reqId] == "error":
                     jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+            
+            self.send_response(200)
+            pass
+        if self.path == "/Search":
+            term = ""
+            if "term" in fields:
+                term = str(fields["term"][0])
+
+            hsh = "{}".format(term) + "{}".format(datetime.date.today())
+
+            if hsh in self.Cache:
+                print("Using cache: {}".format(hsh))
+                jsn = self.Cache[hsh]
+            else:
+                reqId = 211
+                self.IBKApp.Msg[reqId] = "running"
+                self.IBKApp.reqMatchingSymbols(reqId, term)
+
+                timeout = self.waitForResponse(reqId)
+
+                results = []
+                if self.IBKApp.Msg[reqId] == "success":
+                    # might need to change the Queue to index the request id
+                    tempQueue = self.IBKApp.Queue.copy()
+                    for q in tempQueue:
+                        if isinstance(q, ContractDescription):
+                            conDets = q.__dict__
+                            if "contract" in conDets:
+                                con = conDets["contract"].__dict__
+                                del conDets["contract"]
+                                derivativeSecTypes = conDets["derivativeSecTypes"]
+                                del conDets["derivativeSecTypes"]
+                                con["details"] = conDets
+                                con["derivativeSecTypes"] = "{}".format(derivativeSecTypes)
+
+                                try:
+                                    results.append(json.dumps(con))
+                                except Exception as ex:
+                                    print("{}".format(ex))
+                                    print(con)
+                            else:
+                                results.append(json.dumps(conDets))
+                        else:
+                            results.append(q)
+                            
+                        self.IBKApp.Queue.remove(q)
+                    jsn = json.dumps(results)
+                    self.Cache[hsh] = jsn
+                elif self.IBKApp.Msg[reqId] == "error":
+                    jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+                elif timeout:
+                    jsn = json.dumps({"status":"timeout"})
             
             self.send_response(200)
             pass

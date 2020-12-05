@@ -10,6 +10,7 @@ import time
 import json
 import datetime
 import urllib.parse
+import hashlib
 
 from ibapi.common import * # @UnusedWildImport
 from ibapi.contract import * # @UnusedWildImport
@@ -20,8 +21,23 @@ serverPort = 8080
 
 class Server(BaseHTTPRequestHandler):
     IBKApp = None
+    Cache = {}
+
+    def waitForResponse(self, reqId):
+        found = False
+        timeout = False
+        start = datetime.datetime.now()
+        while(not found and not timeout):
+            time.sleep(0.12)
+            if not self.IBKApp.Msg[reqId] == "running":
+                found = True
+            if datetime.datetime.now() - start > datetime.timedelta(minutes=2):
+                timeout = True
+        return found
 
     def do_POST(self):
+        self.send_response(501) # Not Implemented           
+        jsn = "{error:'Failed to execute request'}"
         length = int(self.headers['content-length'])
         field_data = self.rfile.read(length)
         fields = urllib.parse.parse_qs(str(field_data).replace("b'", "")
@@ -77,10 +93,10 @@ class Server(BaseHTTPRequestHandler):
                 whatToShow = str(fields["whatToShow"][0])
             useRTH = 1
             if "useRTH" in fields:
-                useRTH = str(fields["useRTH"][0])
+                useRTH = int(fields["useRTH"][0])
             formatDate = 1
             if "formatDate" in fields:
-                formatDate = str(fields["formatDate"][0])
+                formatDate = int(fields["formatDate"][0])
             
             print("constract: {}".format(contract))
             reqId = 4102
@@ -90,22 +106,14 @@ class Server(BaseHTTPRequestHandler):
                                durationStr, barSizeSetting, whatToShow,
                                useRTH, formatDate, False, [])
             results = []
-            found = False
-            timeout = False
-            start = datetime.datetime.now()
-            while(not found and not timeout):
-                time.sleep(0.12)
-                if not self.IBKApp.Msg[reqId] == "running":
-                    found = True
-                if datetime.datetime.now() - start > datetime.timedelta(minutes=2):
-                    timeout = True
+            timeout = self.waitForResponse(reqId)
             
             if self.IBKApp.Msg[reqId] == "success":
                 tempQueue = self.IBKApp.Queue.copy()
                 for q in tempQueue:
-                    if q is BarData:
+                    if isinstance(q, BarData):
                         results.append(q)
-                    elif q is HistogramDataList:
+                    elif isinstance(q, HistogramDataList):
                         for hd in q:
                             results.append(hd)
                     else:
@@ -114,13 +122,74 @@ class Server(BaseHTTPRequestHandler):
                 jsn = "{}".format(results)
             elif self.IBKApp.Msg[reqId] == "error":
                 jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
-                
-            self.send_response(200)
-            self.send_header("Content-type", "application/json")
-            self.end_headers()
-            self.wfile.write(bytes(jsn, "utf-8"))
+            self.send_response(200)            
             pass
+        if self.path == "/Search":
+            print("Calling Search...")
+            contract = Contract()
+            contract.symbol = "FISV"
+            contract.secType = "OPT"
+            contract.currency = "USD"
+            contract.exchange = "SMART"
+            if "symbol" in fields:
+                contract.symbol = str(fields["symbol"][0])
+            if "secType" in fields:
+                contract.secType = str(fields["secType"][0])
+            if "currency" in fields:
+                contract.currency = str(fields["currency"][0])
+            if "exchange" in fields:
+                contract.exchange = str(fields["exchange"][0])
+            
+            hsh = "{}".format(contract.__dict__) + "{}".format(datetime.date.today())
+
+            if hsh in self.Cache:
+                print("Using cache: {}".format(hsh))
+                jsn = self.Cache[hsh]
+            else:
+                reqId = 210
+                self.IBKApp.Msg[reqId] = "running"
+                self.IBKApp.reqContractDetails(reqId, contract)
+
+                timeout = self.waitForResponse(reqId)
+
+                results = []
+                if self.IBKApp.Msg[reqId] == "success":
+                    # might need to change the Queue to index the request id
+                    tempQueue = self.IBKApp.Queue.copy()
+                    for q in tempQueue:
+                        if isinstance(q, ContractDetails):
+                            conDets = q.__dict__
+                            if "contract" in conDets:
+                                con = conDets["contract"].__dict__
+                                del conDets["contract"]
+                                secIdList = conDets["secIdList"]
+                                del conDets["secIdList"]
+                                con["details"] = conDets
+                                con["secIdList"] = "{}".format(secIdList)
+
+                                try:
+                                    results.append(json.dumps(con))
+                                except Exception as ex:
+                                    print("{}".format(ex))
+                                    print(con)
+                            else:
+                                results.append(json.dumps(conDets))
+                        else:
+                            results.append(q)
+                            
+                        self.IBKApp.Queue.remove(q)
+                    jsn = json.dumps(results)
+                    self.Cache[hsh] = jsn
+                elif self.IBKApp.Msg[reqId] == "error":
+                    jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+            
+            self.send_response(200)
+            pass
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(bytes(jsn, "utf-8"))
         pass
+
 
     def do_GET(self):
         self.send_response(200)

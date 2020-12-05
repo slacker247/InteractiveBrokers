@@ -321,6 +321,7 @@ class TestApp(TestWrapper, TestClient):
 
     def continuousFuturesOperations_req(self):
         # ! [reqcontractdetailscontfut]
+        self.Msg[reqId] = "running"
         self.reqContractDetails(18001, ContractSamples.ContFut())
         # ! [reqcontractdetailscontfut]
 
@@ -1052,8 +1053,9 @@ class TestApp(TestWrapper, TestClient):
     @iswrapper
     # ! [contractdetails]
     def contractDetails(self, reqId: int, contractDetails: ContractDetails):
+        self.Queue.append(contractDetails)
         super().contractDetails(reqId, contractDetails)
-        printinstance(contractDetails)
+        #printinstance(contractDetails)
     # ! [contractdetails]
 
     @iswrapper
@@ -1066,8 +1068,9 @@ class TestApp(TestWrapper, TestClient):
     @iswrapper
     # ! [contractdetailsend]
     def contractDetailsEnd(self, reqId: int):
+        self.Msg[reqId] = "success"
         super().contractDetailsEnd(reqId)
-        print("ContractDetailsEnd. ReqId:", reqId)
+        #print("ContractDetailsEnd. ReqId:", reqId)
     # ! [contractdetailsend]
 
     @iswrapper
@@ -1078,6 +1081,7 @@ class TestApp(TestWrapper, TestClient):
         print("Symbol Samples. Request Id: ", reqId)
 
         for contractDescription in contractDescriptions:
+            self.Queue.append(contractDescription)
             derivSecTypes = ""
             for derivSecType in contractDescription.derivativeSecTypes:
                 derivSecTypes += derivSecType
@@ -1089,6 +1093,7 @@ class TestApp(TestWrapper, TestClient):
                 contractDescription.contract.secType,
                 contractDescription.contract.primaryExchange,
                 contractDescription.contract.currency, derivSecTypes))
+        self.Msg[reqId] = "success"
     # ! [symbolSamples]
 
     @printWhenExecuting

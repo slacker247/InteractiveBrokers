@@ -753,6 +753,15 @@ class TestApp(TestWrapper, TestClient):
     # ! [updatemktdepth]
     def updateMktDepth(self, reqId: TickerId, position: int, operation: int,
                        side: int, price: float, size: int):
+        self.Queue.append({
+            "position":position,
+            "operation":operation,
+            "side":side,
+            "price":price,
+            "size":size
+        })
+        self.Msg[reqId] = "success"
+
         super().updateMktDepth(reqId, position, operation, side, price, size)
         print("UpdateMarketDepth. ReqId:", reqId, "Position:", position, "Operation:",
               operation, "Side:", side, "Price:", price, "Size:", size)
@@ -1078,21 +1087,21 @@ class TestApp(TestWrapper, TestClient):
     def symbolSamples(self, reqId: int,
                       contractDescriptions: ListOfContractDescription):
         super().symbolSamples(reqId, contractDescriptions)
-        print("Symbol Samples. Request Id: ", reqId)
+        #print("Symbol Samples. Request Id: ", reqId)
 
         for contractDescription in contractDescriptions:
             self.Queue.append(contractDescription)
-            derivSecTypes = ""
-            for derivSecType in contractDescription.derivativeSecTypes:
-                derivSecTypes += derivSecType
-                derivSecTypes += " "
-            print("Contract: conId:%s, symbol:%s, secType:%s primExchange:%s, "
-                  "currency:%s, derivativeSecTypes:%s" % (
-                contractDescription.contract.conId,
-                contractDescription.contract.symbol,
-                contractDescription.contract.secType,
-                contractDescription.contract.primaryExchange,
-                contractDescription.contract.currency, derivSecTypes))
+            #derivSecTypes = ""
+            #for derivSecType in contractDescription.derivativeSecTypes:
+            #    derivSecTypes += derivSecType
+            #    derivSecTypes += " "
+            #print("Contract: conId:%s, symbol:%s, secType:%s primExchange:%s, "
+            #      "currency:%s, derivativeSecTypes:%s" % (
+            #    contractDescription.contract.conId,
+            #    contractDescription.contract.symbol,
+            #    contractDescription.contract.secType,
+            #    contractDescription.contract.primaryExchange,
+            #    contractDescription.contract.currency, derivSecTypes))
         self.Msg[reqId] = "success"
     # ! [symbolSamples]
 

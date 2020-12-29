@@ -23,6 +23,39 @@ class Server(BaseHTTPRequestHandler):
     IBKApp = None
     Cache = {}
 
+    def parseContractParm(self, fields):
+        contract = Contract()
+        # this should be in the contract class
+        if "symbol" in fields:
+            contract.symbol = str(fields["symbol"][0])
+        if "secType" in fields:
+            contract.secType = str(fields["secType"][0])
+        if "lastTradeDateOrContractMonth" in fields:
+            contract.lastTradeDateOrContractMonth = str(fields["lastTradeDateOrContractMonth"][0])
+        if "strike" in fields:
+            contract.strike = float(fields["strike"][0])
+        if "right" in fields:
+            contract.right = str(fields["right"][0])
+        if "multiplier" in fields:
+            contract.multiplier = str(fields["multiplier"][0])
+        if "exchange" in fields:
+            contract.exchange = str(fields["exchange"][0])
+        if "primaryExchange" in fields:
+            contract.primaryExchange = str(fields["primaryExchange"][0])
+        if "currency" in fields:
+            contract.currency = str(fields["currency"][0])
+        if "localSymbol" in fields:
+            contract.localSymbol = str(fields["localSymbol"][0])
+        if "tradingClass" in fields:
+            contract.tradingClass = str(fields["tradingClass"][0])
+        if "includeExpired" in fields:
+            contract.includeExpired = bool(fields["includeExpired"][0])
+        if "secIdType" in fields:
+            contract.secIdType = str(fields["secIdType"][0])
+        if "secId" in fields:
+            contract.secId = str(fields["secId"][0])
+        return contract
+
     def waitForResponse(self, reqId):
         found = False
         timeout = False
@@ -48,36 +81,7 @@ class Server(BaseHTTPRequestHandler):
         print("fields: {}".format(fields))
         if self.path == "/Ticks":
             # parse params
-            contract = Contract()
-            # this should be in the contract class
-            if "symbol" in fields:
-                contract.symbol = str(fields["symbol"][0])
-            if "secType" in fields:
-                contract.secType = str(fields["secType"][0])
-            if "lastTradeDateOrContractMonth" in fields:
-                contract.lastTradeDateOrContractMonth = str(fields["lastTradeDateOrContractMonth"][0])
-            if "strike" in fields:
-                contract.strike = float(fields["strike"][0])
-            if "right" in fields:
-                contract.right = str(fields["right"][0])
-            if "multiplier" in fields:
-                contract.multiplier = str(fields["multiplier"][0])
-            if "exchange" in fields:
-                contract.exchange = str(fields["exchange"][0])
-            if "primaryExchange" in fields:
-                contract.primaryExchange = str(fields["primaryExchange"][0])
-            if "currency" in fields:
-                contract.currency = str(fields["currency"][0])
-            if "localSymbol" in fields:
-                contract.localSymbol = str(fields["localSymbol"][0])
-            if "tradingClass" in fields:
-                contract.tradingClass = str(fields["tradingClass"][0])
-            if "includeExpired" in fields:
-                contract.includeExpired = bool(fields["includeExpired"][0])
-            if "secIdType" in fields:
-                contract.secIdType = str(fields["secIdType"][0])
-            if "secId" in fields:
-                contract.secId = str(fields["secId"][0])
+            contract = self.parseContractParm(fields)
 
             endDateTime = (datetime.datetime.today() - datetime.timedelta(days=180)).strftime("%Y%m%d %H:%M:%S")
             if "endDateTime" in fields:
@@ -139,6 +143,10 @@ class Server(BaseHTTPRequestHandler):
                 contract.currency = str(fields["currency"][0])
             if "exchange" in fields:
                 contract.exchange = str(fields["exchange"][0])
+            if "lastTradeDateOrContractMonth" in fields:
+                contract.lastTradeDateOrContractMonth = str(fields["lastTradeDateOrContractMonth"][0])
+            if "localSymbol" in fields:
+                contract.localSymbol = str(fields["localSymbol"][0])
             
             hsh = "{}".format(contract.__dict__) + "{}".format(datetime.date.today())
 
@@ -156,6 +164,7 @@ class Server(BaseHTTPRequestHandler):
                 if self.IBKApp.Msg[reqId] == "success":
                     # might need to change the Queue to index the request id
                     tempQueue = self.IBKApp.Queue.copy()
+                    print("Response length: {}".format(len(tempQueue)))
                     for q in tempQueue:
                         if isinstance(q, ContractDetails):
                             conDets = q.__dict__
@@ -236,6 +245,32 @@ class Server(BaseHTTPRequestHandler):
                     jsn = json.dumps({"status":"timeout"})
             
             self.send_response(200)
+            pass
+        if self.path == "/OrderBook":
+            contract = self.parseContractParm(fields)
+            depth = 1
+            if "depth" in fields:
+                depth = int(fields["depth"][0])
+            
+            print("orderbook: {}".format(contract))
+            reqId = 2001
+            # queryTime the period for which to get ticks
+            self.IBKApp.Msg[reqId] = "running"
+            self.IBKApp.reqMktDepth(reqId, contract, depth, False, [])
+
+            results = []
+            timeout = self.waitForResponse(reqId)
+            
+            if self.IBKApp.Msg[reqId] == "success":
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    results.append(q)
+                    self.IBKApp.Queue.remove(q)
+                jsn = json.dumps(results)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+            self.send_response(200)
+            self.IBKApp.cancelMktDepth(2001, False)
             pass
         self.send_header("Content-type", "application/json")
         self.end_headers()

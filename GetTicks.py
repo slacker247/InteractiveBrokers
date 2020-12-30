@@ -6,12 +6,14 @@ import re
 if __name__ == "__main__":
     url = 'http://localhost:8080/Ticks'
 
-    contract = {"symbol": "TLSA",
-                "secType": "STK",
+    contract = {"symbol": "ES",
+                "secType": "FUT",
                 "currency": "USD",
-                "exchange": "SMART",
-                "durationStr" : "25 D",
-                "endDateTime" : datetime.datetime.today().strftime("%Y%m%d %H:%M:%S")
+                "exchange": "GLOBEX",
+                "durationStr" : "2 D",
+                "barSizeSetting" : "15 mins",
+                "endDateTime" : datetime.datetime.today().strftime("%Y%m%d %H:%M:%S"),
+                "localSymbol" : "ESZ0"
                 }
 
     #  ([0-9]+):( \w+: ([\-\.0-9]+),)+

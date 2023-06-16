@@ -12,6 +12,12 @@ Place order
 Check out the Youtube playlist where I walk through creating this code:
 https://www.youtube.com/playlist?list=PLUfgkPdMt7wBLG57gBo9n4ewuO9eIDfZG
 
+# Quick Start
+
+go to the ibkr sub folder and run
+python service.py
+
+go to the root directory and run any of the Get*.py files
 
 # Donate
 

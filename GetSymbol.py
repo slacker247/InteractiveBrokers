@@ -3,8 +3,21 @@ import requests
 import json
 import re
 
+def extract_ip():
+    st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:       
+        st.connect(('10.255.255.255', 1))
+        IP = st.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        st.close()
+    return IP
+
+host = 'http://' + extract_ip() + ':8080'
+
 def search(term:str):
-    url = 'http://localhost:8080/Search'
+    url = host + '/Search'
 
     contract = {"term": term}
 
@@ -30,7 +43,7 @@ def search(term:str):
     return
 
 def contractLookup(symbol, secType, exchange):
-    url = 'http://localhost:8080/ContractDetails'
+    url = host + '/ContractDetails'
 
     print("-------   Contract details --------")
     contract = {"symbol": symbol,
@@ -62,11 +75,10 @@ def contractLookup(symbol, secType, exchange):
             #print(j2)
         except:
             print("2 parse error: {}".format(j))
-            #print("jsn: {}".format(jsn))
     return
 
 if __name__ == "__main__":
-    #search("futures")
-    contractLookup("ES", "FUT", "GLOBEX")
-    #contractLookup("AMZN", "STK", "ISLAND") # island is nasdaq...
+    #search("LZB")
+    contractLookup("TLSA", "STK", "ISLAND")
+    #contractLookup("AMZN", "STK", "") # island is nasdaq...
 

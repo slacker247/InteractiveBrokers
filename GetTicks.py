@@ -3,8 +3,21 @@ import requests
 import json
 import re
 
+def extract_ip():
+    st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:       
+        st.connect(('10.255.255.255', 1))
+        IP = st.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        st.close()
+    return IP
+
+host = 'http://' + extract_ip() + ':8080'
+
 if __name__ == "__main__":
-    url = 'http://localhost:8080/Ticks'
+    url = host + '/Ticks'
 
     contract = {"symbol": "ES",
                 "secType": "FUT",
@@ -13,7 +26,7 @@ if __name__ == "__main__":
                 "durationStr" : "2 D",
                 "barSizeSetting" : "15 mins",
                 "endDateTime" : datetime.datetime.today().strftime("%Y%m%d %H:%M:%S"),
-                "localSymbol" : "ESZ0"
+                "localSymbol" : "ESH1"
                 }
 
     #  ([0-9]+):( \w+: ([\-\.0-9]+),)+

@@ -84,6 +84,8 @@ class TestApp(TestWrapper, TestClient):
     # ! [nextvalidid]
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
+        self.Msg[-5001] = "success"
+        self.Queue.append(orderId)
 
         logging.debug("setting nextValidOrderId: %d", orderId)
         self.nextValidOrderId = orderId
@@ -166,9 +168,9 @@ class TestApp(TestWrapper, TestClient):
 
     @iswrapper
     # ! [error]
-    def error(self, reqId: TickerId, errorCode: int, errorString: str):
+    def error(self, reqId: TickerId, errorCode: int, errorString: str, data):
         super().error(reqId, errorCode, errorString)
-        print("Error. Id:", reqId, "Code:", errorCode, "Msg:", errorString)
+        print("Error. Id:", reqId, "Code:", errorCode, "Msg:", errorString, "Data:", data)
         self.Msg[reqId] = "error"
         self.Queue.append(errorString)
 
@@ -190,6 +192,7 @@ class TestApp(TestWrapper, TestClient):
               "TotalQty:", order.totalQuantity, "CashQty:", order.cashQty, 
               "LmtPrice:", order.lmtPrice, "AuxPrice:", order.auxPrice, "Status:", orderState.status)
 
+        self.Queue.append(order)
         order.contract = contract
         self.permId2ord[order.permId] = order
     # ! [openorder]
@@ -199,6 +202,7 @@ class TestApp(TestWrapper, TestClient):
     def openOrderEnd(self):
         super().openOrderEnd()
         print("OpenOrderEnd")
+        self.Msg[-5002] = "success"
 
         logging.debug("Received %d openOrders", len(self.permId2ord))
     # ! [openorderend]
@@ -218,6 +222,16 @@ class TestApp(TestWrapper, TestClient):
               whyHeld, "MktCapPrice:", mktCapPrice)
     # ! [orderstatus]
 
+    @iswrapper
+    # ! [reqOpenOrders]
+    def reqOpenOrders():
+        super().reqOpenOrders()
+    # ! [reqOpenOrders]
+
+    @iswrapper
+    # ! [reqCompletedOrders]
+    def reqCompletedOrders(apiOnly):
+        super().reqCompletedOrders(apiOnly)
 
     @printWhenExecuting
     def accountOperations_req(self):

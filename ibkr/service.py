@@ -8,6 +8,7 @@ import datetime
 import collections
 import inspect
 
+import socket
 import threading
 import logging
 import time
@@ -91,6 +92,17 @@ def printinstance(inst:Object):
 """
 
 
+def extract_ip():
+    st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:       
+        st.connect(('10.255.255.255', 1))
+        IP = st.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        st.close()
+    return IP
+
 def main():
     SetupLogger()
     logging.debug("now is %s", datetime.datetime.now())
@@ -137,17 +149,18 @@ def main():
     try:
         app = TestApp()
         Server.IBKApp = app
-        webServer = HTTPServer(("localhost", 8080), Server)
+        ip = extract_ip()
+        print(f"Server listening on http://{ip}:8080")
+        webServer = HTTPServer((ip, 8080), Server)
         if args.global_cancel:
             app.globalCancelOnly = True
+        th = threading.Thread(target=webServer.serve_forever)
+        th.start()
+
         # ! [connect]
         app.connect("127.0.0.1", args.port, clientId=0)
         # ! [connect]
-        print("serverVersion:%s connectionTime:%s" % (app.serverVersion(),
-                                                      app.twsConnectionTime()))
-
-        th = threading.Thread(target=webServer.serve_forever)
-        th.start()
+        print(f"serverVersion:{app.serverVersion()} connectionTime:{app.twsConnectionTime()}")
 
         # ! [clientrun]
         app.run()

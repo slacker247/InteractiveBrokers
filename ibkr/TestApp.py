@@ -363,6 +363,13 @@ class TestApp(TestWrapper, TestClient):
     # ! [accountsummary]
     def accountSummary(self, reqId: int, account: str, tag: str, value: str,
                        currency: str):
+        self.Queue.append({
+            "account":account,
+            "tag":tag,
+            "value":value,
+            "currency":currency
+        })
+        
         super().accountSummary(reqId, account, tag, value, currency)
         print("AccountSummary. ReqId:", reqId, "Account:", account,
               "Tag: ", tag, "Value:", value, "Currency:", currency)
@@ -371,6 +378,7 @@ class TestApp(TestWrapper, TestClient):
     @iswrapper
     # ! [accountsummaryend]
     def accountSummaryEnd(self, reqId: int):
+        self.Msg[reqId] = "success"
         super().accountSummaryEnd(reqId)
         print("AccountSummaryEnd. ReqId:", reqId)
     # ! [accountsummaryend]
@@ -417,6 +425,13 @@ class TestApp(TestWrapper, TestClient):
     # ! [position]
     def position(self, account: str, contract: Contract, position: float,
                  avgCost: float):
+        self.Queue.append({
+            "account":account,
+            "contract":contract,
+            "position":position,
+            "avgCost":avgCost
+        })
+
         super().position(account, contract, position, avgCost)
         print("Position.", "Account:", account, "Symbol:", contract.symbol, "SecType:",
               contract.secType, "Currency:", contract.currency,
@@ -426,6 +441,7 @@ class TestApp(TestWrapper, TestClient):
     @iswrapper
     # ! [positionend]
     def positionEnd(self):
+        self.Msg[6001] = "success"
         super().positionEnd()
         print("PositionEnd")
     # ! [positionend]

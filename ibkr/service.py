@@ -71,16 +71,9 @@ def SetupLogger():
     console.setLevel(logging.ERROR)
     logger.addHandler(console)
 
-
-
 def printinstance(inst:Object):
     attrs = vars(inst)
     print(', '.join("%s: %s" % item for item in attrs.items()))
-
-
-
-
-
 
 # this is here for documentation generation
 """
@@ -90,7 +83,6 @@ def printinstance(inst:Object):
         self.reader.start()   # start thread
 #! [ereader]
 """
-
 
 def extract_ip():
     st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

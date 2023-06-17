@@ -14,6 +14,7 @@ import hashlib
 
 from ibapi.common import * # @UnusedWildImport
 from ibapi.contract import * # @UnusedWildImport
+from ibapi.account_summary_tags import AccountSummaryTags
 from TestApp import TestApp
 
 hostName = "localhost"
@@ -347,6 +348,46 @@ class Server(BaseHTTPRequestHandler):
                 elif timeout:
                     jsn = json.dumps({"status":"timeout"})
             
+            self.send_response(200)
+            pass
+        if self.path == "/Balance":
+            reqId = 9001
+            self.IBKApp.Msg[reqId] = "running"
+            
+            self.IBKApp.reqAccountSummary(reqId, "All", AccountSummaryTags.AllTags)
+
+            timeout = self.waitForResponse(reqId)
+
+            results = []
+            if self.IBKApp.Msg[reqId] == "success":
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    print(f" -- {q} ")
+                    self.IBKApp.Queue.remove(q)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+            elif timeout:
+                jsn = json.dumps({"status":"timeout"})
+            self.send_response(200)
+            pass
+        if self.path == "/Positions":
+            reqId = 6001
+            self.IBKApp.Msg[reqId] = "running"
+            
+            self.IBKApp.reqPositions()
+
+            timeout = self.waitForResponse(reqId)
+
+            results = []
+            if self.IBKApp.Msg[reqId] == "success":
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    print(f" -- {q} ")
+                    self.IBKApp.Queue.remove(q)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+            elif timeout:
+                jsn = json.dumps({"status":"timeout"})
             self.send_response(200)
             pass
         if self.path == "/OrderBook":

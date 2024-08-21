@@ -14,6 +14,7 @@ import hashlib
 
 from ibapi.common import * # @UnusedWildImport
 from ibapi.contract import * # @UnusedWildImport
+from ibapi.account_summary_tags import AccountSummaryTags
 from TestApp import TestApp
 
 hostName = "localhost"
@@ -68,6 +69,98 @@ class Server(BaseHTTPRequestHandler):
                 timeout = True
         return timeout
 
+    # this is called when the server starts up.
+    def getNextOrderId(self):
+        reqId = -5001
+        self.IBKApp.Msg[reqId] = "running"
+        self.IBKApp.reqIds(reqId)
+        timeout = self.waitForResponse(reqId)
+        nextId = self.IBKApp.nextOrderId()
+        return nextId
+
+    def placeLimitOrder(self, contract, price, qty, action):
+        nextId = self.IBKApp.nextOrderId()
+        reqId = -5002
+        self.IBKApp.Msg[reqId] = "running"
+
+        order = {
+            "action": action,
+            "orderType": "LMT",
+            "totalQuantity": qty,
+            "lmtPrice": price
+        }
+
+        if nextId >= 0:
+            self.IBKApp.placeOrder(nextId, contract, order)
+
+            results = []
+            timeout = self.waitForResponse(reqId)
+            
+            if self.IBKApp.Msg[reqId] == "success":
+                results.append(self.Queue.pop())
+                jsn = json.dumps(results)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+            self.send_response(200)
+        return jsn
+
+    def getOpenOrders(self):
+        reqId = -5002
+        self.IBKApp.Msg[reqId] = "running"
+
+        self.reqOpenOrders()
+
+        results = []
+        timeout = self.waitForResponse(reqId)
+        
+        if self.IBKApp.Msg[reqId] == "success":
+            results.append(self.Queue.pop())
+            jsn = json.dumps(results)
+        elif self.IBKApp.Msg[reqId] == "error":
+            jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+        self.send_response(200)
+        return jsn
+
+    def getClosedOrders(self):
+        reqId = -5002
+        self.IBKApp.Msg[reqId] = "running"
+
+        self.reqCompletedOrders(False)
+
+        results = []
+        timeout = self.waitForResponse(reqId)
+        
+        if self.IBKApp.Msg[reqId] == "success":
+            results.append(self.Queue.pop())
+            jsn = json.dumps(results)
+        elif self.IBKApp.Msg[reqId] == "error":
+            jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+        self.send_response(200)
+        return jsn
+
+    def getOrders(self):
+
+        pass
+
+    def getOrderStatus(self, id):
+
+        jsn = json.dumps({"status":"error", "msg":"Order Status - Not Implemented"})
+        return jsn
+
+    def cancelOrder(self, id):
+        reqId = -5003
+        self.IBKApp.Msg[reqId] = "running"
+        self.IBKApp.cancelOrder(id)
+        results = []
+        sleep(0.12)
+        if self.IBKApp.Msg[reqId] == "success":
+            jsn = self.getOrderStatus(id)
+        elif self.IBKApp.Msg[reqId] == "error":
+            jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+        self.send_response(200)
+        
+        return jsn
+
     def do_POST(self):
         self.send_response(501) # Not Implemented           
         jsn = "{error:'Failed to execute request'}"
@@ -83,6 +176,8 @@ class Server(BaseHTTPRequestHandler):
             # parse params
             contract = self.parseContractParm(fields)
 
+            # https://interactivebrokers.github.io/tws-api/historical_bars.html
+            # The request's end date and time (the empty string indicates current present moment).
             endDateTime = (datetime.datetime.today() - datetime.timedelta(days=180)).strftime("%Y%m%d %H:%M:%S")
             if "endDateTime" in fields:
                 endDateTime = str(fields["endDateTime"][0])
@@ -116,14 +211,14 @@ class Server(BaseHTTPRequestHandler):
                 tempQueue = self.IBKApp.Queue.copy()
                 for q in tempQueue:
                     if isinstance(q, BarData):
-                        results.append(q)
+                        results.append(q.__dict__)
                     elif isinstance(q, HistogramDataList):
                         for hd in q:
-                            results.append(hd)
+                            results.append(hd.__dict__)
                     else:
                         results.append(q)
                     self.IBKApp.Queue.remove(q)
-                jsn = "{}".format(results)
+                jsn = json.dumps(results)
             elif self.IBKApp.Msg[reqId] == "error":
                 jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
             self.send_response(200)            
@@ -176,9 +271,18 @@ class Server(BaseHTTPRequestHandler):
                                 con["details"] = conDets
                                 con["secIdList"] = "{}".format(secIdList)
 
+                                for k in con.keys():
+                                    if "decimal.Decimal" in str(type(con[k])):
+                                        con[k] = float(con[k])
+                                    if isinstance(con[k], dict):
+                                        for c in con[k]:
+                                            if "decimal.Decimal" in str(type(con[k][c])):
+                                                con[k][c] = float(con[k][c])
+
                                 try:
                                     results.append(json.dumps(con))
                                 except Exception as ex:
+                                    print(f"  File \"{__file__}\", line {sys.exc_info()[2].tb_frame.f_lineno}, in {__name__}")
                                     print("{}".format(ex))
                                     print(con)
                             else:
@@ -246,6 +350,46 @@ class Server(BaseHTTPRequestHandler):
             
             self.send_response(200)
             pass
+        if self.path == "/Balance":
+            reqId = 9001
+            self.IBKApp.Msg[reqId] = "running"
+            
+            self.IBKApp.reqAccountSummary(reqId, "All", AccountSummaryTags.AllTags)
+
+            timeout = self.waitForResponse(reqId)
+
+            results = []
+            if self.IBKApp.Msg[reqId] == "success":
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    print(f" -- {q} ")
+                    self.IBKApp.Queue.remove(q)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+            elif timeout:
+                jsn = json.dumps({"status":"timeout"})
+            self.send_response(200)
+            pass
+        if self.path == "/Positions":
+            reqId = 6001
+            self.IBKApp.Msg[reqId] = "running"
+            
+            self.IBKApp.reqPositions()
+
+            timeout = self.waitForResponse(reqId)
+
+            results = []
+            if self.IBKApp.Msg[reqId] == "success":
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    print(f" -- {q} ")
+                    self.IBKApp.Queue.remove(q)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+            elif timeout:
+                jsn = json.dumps({"status":"timeout"})
+            self.send_response(200)
+            pass
         if self.path == "/OrderBook":
             contract = self.parseContractParm(fields)
             depth = 1
@@ -272,6 +416,71 @@ class Server(BaseHTTPRequestHandler):
             self.send_response(200)
             self.IBKApp.cancelMktDepth(2001, False)
             pass
+        if self.path == "/Order":
+            contract = self.parseContractParm(fields)
+            price = 0
+            if "price" in fields:
+                price = int(fields["price"][0])
+            qty = 0
+            if "qty" in fields:
+                qty = int(fields["qty"][0])
+            action = "" # BuY, SELL
+            if "action" in fields:
+                action = str(fields["action"][0])
+            _type = ""
+            if "type" in fields:
+                _type = str(fields["type"][0])
+            id = ""
+            if "id" in fields:
+                id = str(fields["id"][0])
+            
+            if _type == "LIMIT":
+                jsn = self.placeLimitOrder(contract, price, qty, action)
+            if _type == "CANCEL":
+                jsn = self.cancleOrder(id)
+            print("order: {}".format(contract))
+            pass
+        if self.path == "/Orders":
+            contract = self.parseContractParm(fields)
+            _type = ""
+            if "type" in fields:
+                _type = str(fields["type"][0])
+            if _type == "OPEN":
+                jsn = self.getOpenOrders()
+            if _type == "CLOSED":
+                jsn = self.getClosedOrders()
+            print("Orders {} requested".format(_type))
+            pass
+        if self.path == "/MktData":
+            # parse params
+            contract = self.parseContractParm(fields)
+            
+            print("constract: {}".format(contract))
+            reqId = 1000
+            # queryTime the period for which to get ticks
+            self.IBKApp.Msg[reqId] = "running"
+            self.reqMktData(reqId, contract, "", False, False, [])
+            results = []
+            timeout = self.waitForResponse(reqId)
+            
+            if self.IBKApp.Msg[reqId] == "success":
+                self.cancelMktData(reqId)
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    if isinstance(q, BarData):
+                        results.append(q.__dict__)
+                    elif isinstance(q, HistogramDataList):
+                        for hd in q:
+                            results.append(hd.__dict__)
+                    else:
+                        results.append(q)
+                    self.IBKApp.Queue.remove(q)
+                jsn = json.dumps(results)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop()})
+            self.send_response(200)            
+            pass
+
         self.send_header("Content-type", "application/json")
         self.end_headers()
         self.wfile.write(bytes(jsn, "utf-8"))

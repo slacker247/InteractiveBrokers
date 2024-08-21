@@ -84,6 +84,8 @@ class TestApp(TestWrapper, TestClient):
     # ! [nextvalidid]
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
+        self.Msg[-5001] = "success"
+        self.Queue.append(orderId)
 
         logging.debug("setting nextValidOrderId: %d", orderId)
         self.nextValidOrderId = orderId
@@ -166,9 +168,9 @@ class TestApp(TestWrapper, TestClient):
 
     @iswrapper
     # ! [error]
-    def error(self, reqId: TickerId, errorCode: int, errorString: str):
+    def error(self, reqId: TickerId, errorCode: int, errorString: str, data):
         super().error(reqId, errorCode, errorString)
-        print("Error. Id:", reqId, "Code:", errorCode, "Msg:", errorString)
+        print("Error. Id:", reqId, "Code:", errorCode, "Msg:", errorString, "Data:", data)
         self.Msg[reqId] = "error"
         self.Queue.append(errorString)
 
@@ -190,6 +192,7 @@ class TestApp(TestWrapper, TestClient):
               "TotalQty:", order.totalQuantity, "CashQty:", order.cashQty, 
               "LmtPrice:", order.lmtPrice, "AuxPrice:", order.auxPrice, "Status:", orderState.status)
 
+        self.Queue.append(order)
         order.contract = contract
         self.permId2ord[order.permId] = order
     # ! [openorder]
@@ -199,6 +202,7 @@ class TestApp(TestWrapper, TestClient):
     def openOrderEnd(self):
         super().openOrderEnd()
         print("OpenOrderEnd")
+        self.Msg[-5002] = "success"
 
         logging.debug("Received %d openOrders", len(self.permId2ord))
     # ! [openorderend]
@@ -218,6 +222,16 @@ class TestApp(TestWrapper, TestClient):
               whyHeld, "MktCapPrice:", mktCapPrice)
     # ! [orderstatus]
 
+    @iswrapper
+    # ! [reqOpenOrders]
+    def reqOpenOrders():
+        super().reqOpenOrders()
+    # ! [reqOpenOrders]
+
+    @iswrapper
+    # ! [reqCompletedOrders]
+    def reqCompletedOrders(apiOnly):
+        super().reqCompletedOrders(apiOnly)
 
     @printWhenExecuting
     def accountOperations_req(self):
@@ -349,6 +363,13 @@ class TestApp(TestWrapper, TestClient):
     # ! [accountsummary]
     def accountSummary(self, reqId: int, account: str, tag: str, value: str,
                        currency: str):
+        self.Queue.append({
+            "account":account,
+            "tag":tag,
+            "value":value,
+            "currency":currency
+        })
+        
         super().accountSummary(reqId, account, tag, value, currency)
         print("AccountSummary. ReqId:", reqId, "Account:", account,
               "Tag: ", tag, "Value:", value, "Currency:", currency)
@@ -357,6 +378,7 @@ class TestApp(TestWrapper, TestClient):
     @iswrapper
     # ! [accountsummaryend]
     def accountSummaryEnd(self, reqId: int):
+        self.Msg[reqId] = "success"
         super().accountSummaryEnd(reqId)
         print("AccountSummaryEnd. ReqId:", reqId)
     # ! [accountsummaryend]
@@ -403,6 +425,13 @@ class TestApp(TestWrapper, TestClient):
     # ! [position]
     def position(self, account: str, contract: Contract, position: float,
                  avgCost: float):
+        self.Queue.append({
+            "account":account,
+            "contract":contract,
+            "position":position,
+            "avgCost":avgCost
+        })
+
         super().position(account, contract, position, avgCost)
         print("Position.", "Account:", account, "Symbol:", contract.symbol, "SecType:",
               contract.secType, "Currency:", contract.currency,
@@ -412,6 +441,7 @@ class TestApp(TestWrapper, TestClient):
     @iswrapper
     # ! [positionend]
     def positionEnd(self):
+        self.Msg[6001] = "success"
         super().positionEnd()
         print("PositionEnd")
     # ! [positionend]

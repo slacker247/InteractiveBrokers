@@ -11,11 +11,13 @@ import json
 import datetime
 import urllib.parse
 import hashlib
+import re
 
 from ibapi.common import * # @UnusedWildImport
 from ibapi.contract import * # @UnusedWildImport
 from ibapi.account_summary_tags import AccountSummaryTags
 from TestApp import TestApp
+from Account import Account
 
 hostName = "localhost"
 serverPort = 8080
@@ -57,6 +59,9 @@ class Server(BaseHTTPRequestHandler):
             contract.secId = str(fields["secId"][0])
         return contract
 
+    def getContract(self, conId):
+        pass
+    
     def waitForResponse(self, reqId):
         found = False
         timeout = False
@@ -160,6 +165,77 @@ class Server(BaseHTTPRequestHandler):
         self.send_response(200)
         
         return jsn
+
+    def getAccountInfo(self):
+        reqId = 9001
+        self.IBKApp.Msg[reqId] = "running"
+        
+        self.IBKApp.reqAccountSummary(reqId, "All", AccountSummaryTags.AllTags)
+
+        timeout = self.waitForResponse(reqId)
+
+        results = []
+        if self.IBKApp.Msg[reqId] == "success":
+            tempQueue = self.IBKApp.Queue.copy()
+            results = {}
+            for q in tempQueue:
+                print(f" -- {q} ")
+                if isinstance(q, dict):
+                    if not q["account"] in results:
+                        results[q["account"]] = Account()
+                        results[q["account"]].setId(q["account"])
+                    if q["tag"] == "AccountType":
+                        results[q["account"]].accountType = q["value"]
+                    #if q["tag"] == "Cushion":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "DayTradesRemaining":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "LookAheadNextChange":
+                    #    results[q["account"]].tradingType = q["value"]
+                    if q["tag"] == "AvailableFunds":
+                        results[q["account"]].availableFunds = float(q["value"])
+                    #if q["tag"] == "BuyingPower":
+                    #    results[q["account"]].tradingType = q["value"]
+                    if q["tag"] == "EquityWithLoanValue":
+                        results[q["account"]].equityWithLoanValue = float(q["value"])
+                    if q["tag"] == "ExcessLiquidity":
+                        results[q["account"]].excessLiquidity = float(q["value"])
+                    #if q["tag"] == "FullAvailableFunds":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "FullExcessLiquidity":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "FullInitMarginReq":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "FullMaintMarginReq":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "GrossPositionValue":
+                    #    results[q["account"]].tradingType = q["value"]
+                    if q["tag"] == "InitMarginReq":
+                        results[q["account"]].initialMargin = float(q["value"])
+                    #if q["tag"] == "LookAheadAvailableFunds":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "LookAheadExcessLiquidity":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "LookAheadInitMarginReq":
+                    #    results[q["account"]].tradingType = q["value"]
+                    #if q["tag"] == "LookAheadMaintMarginReq":
+                    #    results[q["account"]].tradingType = q["value"]
+                    if q["tag"] == "MaintMarginReq":
+                        results[q["account"]].maintenanceMargin = float(q["value"])
+                    if q["tag"] == "NetLiquidation":
+                        results[q["account"]].netLiquidationValue = float(q["value"])
+                    #if q["tag"] == "PreviousDayEquityWithLoanValue":
+                    #    results[q["account"]].tradingType = q["value"]
+                    if q["tag"] == "SMA":
+                        results[q["account"]].SMA = float(q["value"])
+                    if q["tag"] == "TotalCashValue":
+                        results[q["account"]].totalCashValue = float(q["value"])
+                    self.IBKApp.Queue.remove(q)
+        elif self.IBKApp.Msg[reqId] == "error":
+            raise Exception({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+        elif timeout:
+            raise Exception({"status":"timeout"})
+        return results
 
     def do_POST(self):
         self.send_response(501) # Not Implemented           
@@ -350,7 +426,7 @@ class Server(BaseHTTPRequestHandler):
             
             self.send_response(200)
             pass
-        if self.path == "/Balance":
+        if self.path == "/v1/api/portfolio/accounts":
             reqId = 9001
             self.IBKApp.Msg[reqId] = "running"
             
@@ -488,14 +564,81 @@ class Server(BaseHTTPRequestHandler):
 
 
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/html")
-        self.end_headers()
-        self.wfile.write(bytes("<html><head><title>https://pythonbasics.org</title></head>", "utf-8"))
-        self.wfile.write(bytes("<p>Request: %s</p>" % self.path, "utf-8"))
-        self.wfile.write(bytes("<body>", "utf-8"))
-        self.wfile.write(bytes("<p>This is an example web server.</p>", "utf-8"))
-        self.wfile.write(bytes("</body></html>", "utf-8"))
+        mAccountSummary = re.match(r"^/v1/api/iserver/account/([^/]+)/summary$", self.path)
+        mPosition = re.match(r"^/v1/api/portfolio/([^/]+)/position/([0-9]+)$", self.path)
+        if self.path == "/v1/api/portfolio/accounts":
+            try:
+                results = self.getAccountInfo()
+                r = []
+                for item in results.values():
+                    r.append(item.to_dict())
+                jsn = json.dumps(r)
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(bytes(jsn, "utf-8"))
+            except Exception as ex:
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                jsn = json.dumps(str(ex))
+                self.wfile.write(bytes(jsn, "utf-8"))
+            pass
+        elif mAccountSummary:
+            account = mAccountSummary.group(1)
+            try:
+                results = self.getAccountInfo()
+                r = []
+                jsn = {}
+                for item in results.values():
+                    if item.id == account:
+                        r.append(item.to_dict())
+                if len(r) > 0:
+                    jsn = json.dumps(r[0])
+                    pass
+                else:
+                    jsn = json.dumps({"status":"error", "msg":"Unknown account."})
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                self.wfile.write(bytes(jsn, "utf-8"))
+            except Exception as ex:
+                self.send_response(200)
+                self.send_header("Content-type", "application/json")
+                self.end_headers()
+                jsn = json.dumps(str(ex))
+                self.wfile.write(bytes(jsn, "utf-8"))
+            pass
+        elif mPosition:
+            reqId = 6001
+            self.IBKApp.Msg[reqId] = "running"
+            
+            self.IBKApp.reqPositions()
+
+            timeout = self.waitForResponse(reqId)
+
+            results = []
+            if self.IBKApp.Msg[reqId] == "success":
+                tempQueue = self.IBKApp.Queue.copy()
+                for q in tempQueue:
+                    print(f" -- {q} ")
+                    self.IBKApp.Queue.remove(q)
+            elif self.IBKApp.Msg[reqId] == "error":
+                jsn = json.dumps({"status":"error", "msg":self.IBKApp.Queue.pop(), "timeout": timeout})
+            elif timeout:
+                jsn = json.dumps({"status":"timeout"})
+            self.send_response(200)
+            pass
+        else:
+            print(self.path)
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(bytes("<html><head><title>https://pythonbasics.org</title></head>", "utf-8"))
+            self.wfile.write(bytes("<p>Request: %s</p>" % self.path, "utf-8"))
+            self.wfile.write(bytes("<body>", "utf-8"))
+            self.wfile.write(bytes("<p>This is an example web server.</p>", "utf-8"))
+            self.wfile.write(bytes("</body></html>", "utf-8"))
 
 if __name__ == "__main__":        
     webServer = HTTPServer((hostName, serverPort), MyServer)

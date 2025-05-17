@@ -14,6 +14,7 @@ import logging
 import time
 import os.path
 import sys
+import ssl
 
 db_import = os.path.join(sys.path[0], "C:\\TWS API\\source\\pythonclient")
 print(db_import)
@@ -136,16 +137,26 @@ def main():
     # print(tc.reqId2nReq)
     # sys.exit(1)
 
+
+    print(ssl.OPENSSL_VERSION)
     webServer = None
     th = None
     try:
         app = TestApp()
         Server.IBKApp = app
         ip = extract_ip()
-        print(f"Server listening on http://{ip}:8080")
         webServer = HTTPServer((ip, 8080), Server)
+
+        # Modern TLS context setup
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile="cert.pem", keyfile="key.pem")
+
+        # Wrap the socket using context
+        webServer.socket = context.wrap_socket(webServer.socket, server_side=True)
+
         if args.global_cancel:
             app.globalCancelOnly = True
+        print(f"Server listening on https://{ip}:8080")
         th = threading.Thread(target=webServer.serve_forever)
         th.start()
 

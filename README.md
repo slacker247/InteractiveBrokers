@@ -1,7 +1,7 @@
 # InteractiveBrokers
 Python interface for the Interactive Brokers Application
 
-https://www1.interactivebrokers.com/en/search/search.php?q=api
+https://github.com/InteractiveBrokers/tws-api-public?tab=readme-ov-file
 
 Read Stock symbols
 

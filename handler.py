@@ -3,6 +3,7 @@ import sys
 from datetime import datetime
 import json
 import re
+import time
 # https://ib-insync.readthedocs.io/api.html
 from ib_insync import *
 
@@ -441,6 +442,170 @@ def get_order_status(order_id):
             }
     return None
 
+def format_search(match):
+    contract = match.contract
+    return {
+        "conid": contract.conId,
+        "companyHeader": contract.description,
+        "companyName": contract.description,
+        "symbol": contract.symbol,
+        "description": contract.primaryExchange,
+        "restricted": None,
+        "fop": None,
+        "opt": None,
+        "war": None,
+        "sections": [
+            {"secType": contract.secType}
+        ]
+    }
+
+def search(symbol):
+    ib = connect_ib()
+    matches = ib.reqMatchingSymbols(symbol)
+    ib.disconnect()
+
+    # Print results
+    contracts = {}
+    if matches == None:
+        contracts = {"error": "Empty result"}
+    else:
+        contracts = [format_search(m) for m in matches]
+    return contracts
+
+def contractLookup(conid):
+    ib = connect_ib()
+
+    contract = Contract(conId=conid, exchange='SMART', secType='STK', currency='USD')
+    details = ib.reqContractDetails(contract)
+    ib.disconnect()
+
+    if not details:
+        raise ValueError(f"No contract details found for conid {conid}")
+
+    detail = details[0]
+    contract = detail.contract
+
+    secdef = {
+        "secdef": [
+            {
+                "incrementRules": [
+                    {
+                        "lowerEdge": 0,
+                        "increment": 0.01
+                    }
+                ],
+                "displayRule": {
+                    "magnification": 0,
+                    "displayRuleStep": [
+                        {
+                            "decimalDigits": 2,
+                            "lowerEdge": 0,
+                            "wholeDigits": 4
+                        }
+                    ]
+                },
+                "conid": contract.conId,
+                "currency": contract.currency,
+                "time": 770,  # static as per your example; replace if dynamic
+                "chineseName": "",  # not available from IB API
+                "allExchanges": detail.marketRuleIds or "",
+                "listingExchange": contract.exchange,
+                "countryCode": detail.contract.primaryExchange if hasattr(detail.contract, "primaryExchange") else "US",
+                "name": detail.longName or contract.symbol,
+                "assetClass": contract.secType,
+                "expiry": contract.lastTradeDateOrContractMonth if contract.lastTradeDateOrContractMonth else None,
+                "lastTradingDay": None,
+                "group": "",  # Not available from IBKR API
+                "putOrCall": contract.right if contract.right else None,
+                "sector": "",  # Not available from IBKR API
+                "sectorGroup": "",  # Not available from IBKR API
+                "strike": str(contract.strike) if contract.strike else "0",
+                "ticker": contract.symbol,
+                "undConid": detail.underConId if hasattr(detail, "underConId") else 0,
+                "multiplier": int(contract.multiplier) if contract.multiplier else 0,
+                "type": "COMMON",  # assumed; IBKR doesn't provide a direct 'type' field
+                "hasOptions": detail.evRule != "",  # crude heuristic
+                "fullName": detail.longName or contract.symbol,
+                "isUS": contract.currency == "USD",
+                "isEventContract": False  # not from IBKR; static unless needed
+            }
+        ]
+    }
+
+    return secdef
+
+def get_formatted_bars(conid, end_datetime, duration_str='1 D', bar_size='1 day'):
+    ib = connect_ib()
+
+    # Create contract with only conid
+    contract = Contract(conId=conid, exchange='SMART', secType='STK', currency='USD')
+    details = ib.reqContractDetails(contract)
+    
+    if not details:
+        ib.disconnect()
+        raise ValueError(f"No contract details found for conid {conid}")
+
+    resolved_contract = details[0].contract
+    symbol = resolved_contract.symbol
+    company_name = details[0].longName or symbol  # fallback to symbol if longName unavailable
+
+    bars = ib.reqHistoricalData(
+        resolved_contract,
+        endDateTime=end_datetime,
+        durationStr=duration_str,
+        barSizeSetting=bar_size,
+        whatToShow='TRADES',
+        useRTH=True,
+        formatDate=1
+    )
+
+    if not bars:
+        ib.disconnect()
+        return {}
+    ib.disconnect()
+
+    first_bar = bars[0]
+    start_time_str = first_bar.date.replace(' ', '-')
+    chart_pan_time = bars[-1].date.replace(' ', '-')
+    price_factor = 100
+
+    result = {
+        "serverid": "20477",
+        "symbol": symbol,
+        "text": company_name,
+        "priceFactor": price_factor,
+        "startTime": start_time_str,
+        "high": f"{int(first_bar.high * price_factor)}/{first_bar.volume}/0",
+        "low": f"{int(first_bar.low * price_factor)}/{first_bar.volume}/0",
+        "timePeriod": "1d",
+        "barLength": 86400,
+        "mdAvailability": "RpB",
+        "outsideRth": False,
+        "tradingDayDuration": 1440,
+        "volumeFactor": 1,
+        "priceDisplayRule": 1,
+        "priceDisplayValue": "2",
+        "chartPanStartTime": chart_pan_time,
+        "direction": -1,
+        "negativeCapable": False,
+        "messageVersion": 2,
+        "travelTime": 48,
+        "data": [
+            {
+                "t": int(time.mktime(datetime.strptime(bar.date.split(' ')[0], "%Y%m%d").timetuple()) * 1000),
+                "o": bar.open,
+                "c": bar.close,
+                "h": bar.high,
+                "l": bar.low,
+                "v": bar.volume
+            } for bar in bars
+        ],
+        "points": len(bars),
+        "mktDataDelay": 0
+    }
+
+    return result
+
 def handle_pa_transaction(data):
     return {"status": "received", "transaction": data}
 
@@ -520,6 +685,61 @@ def main():
                     result = result
                 else:
                     result = {"error": "Order not found"}
+            elif re.match(r"^/iserver/secdef/search\?symbol=\w+", path):
+                url = path
+                if '?' in url:
+                    path, query = url.split('?', 1)
+                else:
+                    path, query = url, ''
+
+                params = {}
+                if query:
+                    for pair in query.split('&'):
+                        if '=' in pair:
+                            k, v = pair.split('=', 1)
+                            params[k] = v
+                        else:
+                            params[pair] = ''
+                    result = search(params["symbol"])
+                pass
+            elif re.match(r"^/iserver/marketdata/history", path):
+                url = path
+                if '?' in url:
+                    path, query = url.split('?', 1)
+                else:
+                    path, query = url, ''
+
+                params = {}
+                if query:
+                    for pair in query.split('&'):
+                        if '=' in pair:
+                            k, v = pair.split('=', 1)
+                            params[k] = v
+                        else:
+                            params[pair] = ''
+                    conid = params["conid"]
+                    duration_str = params["period"]
+                    bar_size = params["bar"]
+                    end_datetime = params["startTime"]
+                    result = get_formatted_bars(conid, end_datetime, duration_str, bar_size)
+                pass
+            elif re.match(r"^/trsrv/secdef", path):
+                url = path
+                if '?' in url:
+                    path, query = url.split('?', 1)
+                else:
+                    path, query = url, ''
+
+                params = {}
+                if query:
+                    for pair in query.split('&'):
+                        if '=' in pair:
+                            k, v = pair.split('=', 1)
+                            params[k] = v
+                        else:
+                            params[pair] = ''
+                conid = params["conids"]
+                result = contractLookup(conid)
         elif method == "POST":
             post_data = read_post_data()
             if re.match(r"^/v1/api/iserver/account/[^/]+/orders$", path):

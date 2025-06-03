@@ -10,3 +10,5 @@ ib_insync
 pygetwindow
 pywinauto
 pywin32
+
+psutil

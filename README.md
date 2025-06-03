@@ -1,7 +1,6 @@
 # InteractiveBrokers
-Python interface for the Interactive Brokers Application
-
-https://github.com/InteractiveBrokers/tws-api-public?tab=readme-ov-file
+Web API wrapper the Interactive Brokers Traders Workstation (TWS)
+https://www.interactivebrokers.com/en/trading/tws.php
 
 Read Stock symbols
 
@@ -9,15 +8,17 @@ Read Ticks for a given Stock
 
 Place order
 
-Check out the Youtube playlist where I walk through creating this code:
-https://www.youtube.com/playlist?list=PLUfgkPdMt7wBLG57gBo9n4ewuO9eIDfZG
-
 # Quick Start
 
-go to the ibkr sub folder and run
-python service.py
+create a secrets.ini file with your TWS login.
+username=<YOUR_USERNAME>
+password=<YOUR_PASSWORD>
 
-go to the root directory and run any of the Get*.py files
+start TWS - You may need to update the startTWS.py file as to the location of TWS.
+python statTWS.py
+
+start web api
+python server.py
 
 # Donate
 

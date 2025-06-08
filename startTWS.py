@@ -1,10 +1,10 @@
 import subprocess
 import datetime
 import time
+import psutil
 import pygetwindow as gw
 from pywinauto.application import Application
 from pywinauto.keyboard import send_keys
-import psutil
 
 # DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP flags
 DETACHED_PROCESS = 0x00000008
@@ -89,7 +89,7 @@ if __name__ == "__main__":
             p2 = find_process("python.exe")
             p1 = None
             for p in p2:
-                if "server.py" in p["cmdline"]:
+                if "server.py" in p.info["cmdline"]:
                     p1 = p
             if p1 != None:
                 dt = datetime.datetime.now()
@@ -103,10 +103,11 @@ if __name__ == "__main__":
             launch_tws()
 
             print(f"{dt} - starting server.py...")
-            subprocess.Popen(
-                args='start "server.py" python -u server.py',
-                cwd="C:\\projects\\InteractiveBrokers\\"
-            )
+            #subprocess.Popen(
+            #    'start "server.py" python -u server.py',
+            #    cwd="C:\\projects\\InteractiveBrokers\\",
+            #    shell=True
+            #)
 
         time.sleep(60)
 

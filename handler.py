@@ -1,12 +1,34 @@
 import socket
+import signal
 import sys
+import inspect
 from datetime import datetime
 import json
 import re
 import time
+import threading
+import asyncio
+import IBWorker
 # https://ib-insync.readthedocs.io/api.html
 from ib_insync import *
+import tracemalloc
+tracemalloc.start()
+ib = None
+server_socket = None
+threads = []
 
+def shutdown(signum, frame):
+    global server_socket, threads
+    print("\nShutting down gracefully...")
+    if server_socket:
+        server_socket.close()
+    for t in threads:
+        t.join(timeout=1)
+    sys.exit(0)
+
+# Register Ctrl+C handler
+signal.signal(signal.SIGINT, shutdown)
+signal.signal(signal.SIGTERM, shutdown)
 
 def extract_ip():
     st = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -31,11 +53,6 @@ def full_stack():
     if exc is not None:
          stackstr += '  ' + traceback.format_exc().lstrip(trc)
     return stackstr
-
-def connect_ib():
-    ib = IB()
-    ib.connect('127.0.0.1', 7497, clientId=1)
-    return ib
 
 def parse_account_summary(summary):
     def get(tag):
@@ -80,13 +97,9 @@ def parse_account_summary(summary):
     }
 
 def get_account_summary(account_id):
-    ib = IB()
-    ib.connect('127.0.0.1', 7497, clientId=1)
-
-    summary = ib.accountSummary()
+    summary = {}
+    summary = IBWorker.ib_worker.request('accountSummary')
     parsed = parse_account_summary(summary)
-
-    ib.disconnect()
     return parsed
 
 def post_handler(path, post_data):
@@ -103,11 +116,10 @@ def get_positions(
     """
     Fetch positions from IB, filter by accountId, sort and paginate.
     """
-    ib = connect_ib()
 
     # Request positions (note: ib.positions() returns a list of (contract, position, avgCost) tuples)
     # positions() does not filter by account, so filter here.
-    all_positions = ib.positions()
+    all_positions = IBWorker.ib_worker.request('positions')
 
     # Filter by accountId
     positions_filtered = [
@@ -117,14 +129,14 @@ def get_positions(
     # If waitForSecDef is True, fetch security definitions for all contracts
     if waitForSecDef:
         for contract, _, _ in positions_filtered:
-            ib.reqContractDetails(contract)
+            IBWorker.ib_worker.request('reqContractDetails', contract)
 
     # Convert positions to output dicts like your format
     result = []
     for contract, position, avgCost in positions_filtered:
         # Get market price
-        ticker = ib.reqMktData(contract, "", False, False)
-        ib.sleep(0.1)  # brief wait to get market data
+        ticker = IBWorker.ib_worker.request('reqMktData', contract, "", False, False)
+        time.sleep(0.1)  # brief wait to get market data
 
         # Build response dict (some fields from contract, others from ib_insync calls)
         d = {
@@ -192,12 +204,9 @@ def get_positions(
     page_size = 100
     start = pageId * page_size
     end = start + page_size
-    ib.disconnect()
     return result[start:end]
 
 def post_order(account_id, orders_data):
-    ib = connect_ib()
-
     results = []
 
     for data in orders_data:
@@ -244,9 +253,9 @@ def post_order(account_id, orders_data):
             order.parentId = data['parentId']
 
         # Place order
-        ib.qualifyContracts(contract)
-        trade = ib.placeOrder(contract, order)
-        ib.sleep(1)  # give time for order to register
+        IBWorker.ib_worker.request('qualifyContracts', contract)
+        trade = IBWorker.ib_worker.request('placeOrder', contract, order)
+        time.sleep(1)  # give time for order to register
 
         results.append({
             "order_id": str(trade.order.orderId),
@@ -254,21 +263,19 @@ def post_order(account_id, orders_data):
             "encrypt_message": "1"  # Mocked for format compatibility
         })
 
-    ib.disconnect()
     return results
 
 def delete_order(account_id, order_id):
-    ib = connect_ib()
     # Try to cancel the order
     try:
-        orders = ib.reqOpenOrders()
+        orders = IBWorker.ib_worker.request('reqOpenOrders')
         order_found = None
         for t in orders:
             if t.order.orderId == order_id:
                 order_found = t
 
         if order_found:
-            ib.cancelOrder(order_found.order)
+            IBWorker.ib_worker.request('cancelOrder', order_found.order)
             response = [{
                 "msg": "Request was submitted",
                 "order_id": str(order_id),
@@ -289,8 +296,6 @@ def delete_order(account_id, order_id):
             "order_status": "Failed",
             "encrypt_message": "0"
         }]
-    finally:
-        ib.disconnect()
 
     return response
 
@@ -332,16 +337,15 @@ def format_order(trade:Trade):
     }
 
 def get_orders(filters: list, force: bool, account_id: str):
-    ib = connect_ib()
 
     if force:
-        ib.reqGlobalCancel()
+        IBWorker.ib_worker.request('reqGlobalCancel')
 
-    ib.sleep(0.5)  # Let it clear
+    time.sleep(0.5)  # Let it clear
 
-    open_orders = ib.reqOpenOrders()
-    ib.sleep(0.5)
-    trades = ib.trades()
+    open_orders = IBWorker.ib_worker.request('reqOpenOrders')
+    time.sleep(0.5)
+    trades = IBWorker.ib_worker.request('trades')
 
     # Merge open and completed orders
     all_orders = trades + open_orders
@@ -371,23 +375,20 @@ def get_orders(filters: list, force: bool, account_id: str):
 
     formatted = [format_order(t) for t in deduped_orders]
 
-    ib.disconnect()
     return {
         "orders": formatted,
         "snapshot": True
     }
 
 def extract_order_id(url):
-    match = re.match(r'^GET\s+/v1/api/iserver/account/order/status/(\d+)$', url)
+    match = re.match(r'^GET\s+/iserver/account/order/status/(\d+)$', url)
     if not match:
-        print("Invalid URL format. Expected: GET /v1/api/iserver/account/order/status/{orderId}")
+        print("Invalid URL format. Expected: GET /iserver/account/order/status/{orderId}")
         sys.exit(1)
     return int(match.group(1))
 
 def get_order_status(order_id):
-    ib = connect_ib()
-    trades = ib.trades()
-    ib.disconnect()
+    trades = IBWorker.ib_worker.request('trades')
     for trade in trades:
         if trade.order.permId == order_id or trade.order.orderId == order_id:
             order = trade.order
@@ -460,24 +461,21 @@ def format_search(match):
     }
 
 def search(symbol):
-    ib = connect_ib()
-    matches = ib.reqMatchingSymbols(symbol)
-    ib.disconnect()
+    matches = IBWorker.ib_worker.request('reqMatchingSymbols', symbol)
+    #contract = Stock(symbol, 'SMART', 'USD')
+    #matches = IBWorker.ib_worker.request('reqContractDetails', contract)
 
-    # Print results
     contracts = {}
     if matches == None:
-        contracts = {"error": "Empty result"}
+        line = inspect.currentframe().f_lineno
+        contracts = {"error": f"{line} - handler - search - Empty result"}
     else:
         contracts = [format_search(m) for m in matches]
     return contracts
 
 def contractLookup(conid):
-    ib = connect_ib()
-
     contract = Contract(conId=conid, exchange='SMART', secType='STK', currency='USD')
-    details = ib.reqContractDetails(contract)
-    ib.disconnect()
+    details = IBWorker.ib_worker.request('reqContractDetails', contract)
 
     if not details:
         raise ValueError(f"No contract details found for conid {conid}")
@@ -535,21 +533,18 @@ def contractLookup(conid):
     return secdef
 
 def get_formatted_bars(conid, end_datetime, duration_str='1 D', bar_size='1 day'):
-    ib = connect_ib()
-
     # Create contract with only conid
     contract = Contract(conId=conid, exchange='SMART', secType='STK', currency='USD')
-    details = ib.reqContractDetails(contract)
+    details = IBWorker.ib_worker.request('reqContractDetails', contract)
     
     if not details:
-        ib.disconnect()
         raise ValueError(f"No contract details found for conid {conid}")
 
     resolved_contract = details[0].contract
     symbol = resolved_contract.symbol
     company_name = details[0].longName or symbol  # fallback to symbol if longName unavailable
 
-    bars = ib.reqHistoricalData(
+    bars = IBWorker.ib_worker.request('reqHistoricalData',
         resolved_contract,
         endDateTime=end_datetime,
         durationStr=duration_str,
@@ -560,9 +555,7 @@ def get_formatted_bars(conid, end_datetime, duration_str='1 D', bar_size='1 day'
     )
 
     if not bars:
-        ib.disconnect()
         return {}
-    ib.disconnect()
 
     first_bar = bars[0]
     start_time_str = first_bar.date.replace(' ', '-')
@@ -620,14 +613,19 @@ def main():
 
     method = sys.argv[1].upper()
     path = sys.argv[2]
+    post_data = read_post_data()
+    jsn = processRequest(method, path, post_data)
+    print(jsn)
 
+def processRequest(method, path, post_data):
     try:
-        result = None
+        line = inspect.currentframe().f_lineno
+        result = {"error": f"{line} - handler - processRequest - Failed to process request"}
         if method == "GET":
-            if re.match(r"^/v1/api/iserver/account/[^/]+/summary$", path):
-                account_id = path.split('/')[5]
+            if re.match(r"^/iserver/account/[^/]+/summary$", path):
+                account_id = path.split('/')[3]
                 result = get_account_summary(account_id)
-            elif re.match(r"^/v1/api/portfolio/[^/]+/positions/\d+$", path):
+            elif re.match(r"^/portfolio/[^/]+/positions/\d+$", path):
                 url = path
                 if '?' in url:
                     path, query = url.split('?', 1)
@@ -635,7 +633,7 @@ def main():
                     path, query = url, ''
 
                 # Extract accountId and pageId from path
-                m = re.match(r'^/v1/api/portfolio/([^/]+)/positions/(\d+)$', path)
+                m = re.match(r'^/portfolio/([^/]+)/positions/(\d+)$', path)
                 if not m:
                     raise ValueError(f"URL path format invalid: {path}")
                 accountId, pageId = m.group(1), int(m.group(2))
@@ -656,7 +654,7 @@ def main():
                 waitForSecDef = params.get('waitForSecDef', 'false').lower() == 'true'
                 positions = get_positions(accountId, pageId, model, sort, direction, waitForSecDef)
                 result = positions
-            elif re.match(r"^/v1/api/iserver/account/orders", path):
+            elif re.match(r"^/iserver/account/orders", path):
                 url = path
                 if '?' in url:
                     path, query = url.split('?', 1)
@@ -678,13 +676,14 @@ def main():
                 force = params.get('force', False)
                 account_id = params.get('accountId', None)
                 result = get_orders(filters, force, account_id)
-            elif re.match(r"^/v1/api/iserver/account/order/status/\d+$", path):
+            elif re.match(r"^/iserver/account/order/status/\d+$", path):
                 order_id = extract_order_id(url)
                 result = get_order_status(order_id)
                 if result:
                     result = result
                 else:
-                    result = {"error": "Order not found"}
+                    line = inspect.currentframe().f_lineno
+                    result = {"error": f"{line} - handler - processRequest - Order not found"}
             elif re.match(r"^/iserver/secdef/search\?symbol=\w+", path):
                 url = path
                 if '?' in url:
@@ -741,27 +740,73 @@ def main():
                 conid = params["conids"]
                 result = contractLookup(conid)
         elif method == "POST":
-            post_data = read_post_data()
-            if re.match(r"^/v1/api/iserver/account/[^/]+/orders$", path):
-                account_id = path.split('/')[5]
-                result = post_order(account_id, post_data)
+            if re.match(r"^/iserver/account/[^/]+/orders$", path):
+                account_id = path.split('/')[3]
+                jsn = json.loads(post_data)
+                result = post_order(account_id, jsn)
             elif path == "/pa/transactions":
                 #result = handle_pa_transaction(post_data)
-                result = {"error": "Unsupported method"}
+                line = inspect.currentframe().f_lineno
+                result = {"error": f"{line} - handler - processRequest - Unsupported method"}
         elif method == "DELETE":
-            if re.match(r"^/v1/api/iserver/account/[^/]+/order/\d+$", path):
+            if re.match(r"^/iserver/account/[^/]+/order/\d+$", path):
                 parts = path.split('/')
-                result = delete_order(parts[5], int(parts[7]))
+                result = delete_order(parts[3], int(parts[5]))
         else:
-            result = {"error": "Unsupported method"}
+            line = inspect.currentframe().f_lineno
+            result = {"error": f"{line} - handler - processRequest - Unsupported method"}
     except Exception as e:
         #print(full_stack())
-        result = {"error": str(e)}
+        line = inspect.currentframe().f_lineno
+        result = {"error": f"{line} - handler - processRequest - {e}"}
 
-    print(json.dumps(result))
+    return json.dumps(result)
+
+def handle_client(conn, addr):
+    try:
+        with conn:
+            data = ''
+            while True:
+                chunk = conn.recv(4096).decode("utf-8")
+                if not chunk:
+                    break
+                data += chunk
+                if "\n" in chunk:
+                    break
+
+            print(f"Message Received: {data}")
+            request = json.loads(data.strip())
+            action = request.get("action")
+            path = request.get("path")
+            payload = request.get("data", {})
+
+            response = processRequest(action, path, payload)
+
+            #print(f"Sending response: {response}")
+            conn.sendall((response + "\n").encode("utf-8"))
+    except Exception as e:
+        err = json.dumps({"error": f"handler - handle_client - {e}"})
+        conn.sendall((err + "\n").encode("utf-8"))
+
+def start_server():
+    global server_socket, threads
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(("localhost", 9009))
+    server_socket.listen()
+
+    print("Backend IBKR handler listening on port 9009...")
+
+    while True:
+        conn, addr = server_socket.accept()
+        thread = threading.Thread(target=handle_client, args=(conn, addr))
+        threads.append(thread)
+        thread.start()
 
 if __name__ == "__main__":
-    main()
+    # Start the event loop in a dedicated thread
+    #th = threading.Thread(target=ib_thread_worker, daemon=True).start()
+    #threads.append(th)
+    start_server()
 
 # === Models ===
 class OrderRequest():
@@ -842,96 +887,6 @@ def get_account_balance(account: str):
 
     return result
 
-'''
-@app.get("/account/positions")
-def get_positions():
-    return [
-        {
-            'symbol': pos.contract.symbol,
-            'quantity': pos.position,
-            'avgCost': pos.avgCost,
-            'marketPrice': pos.marketPrice,
-        }
-        for pos in ib.positions()
-    ]
-
-@app.get("/market/orderbook/{symbol}")
-def get_order_book(symbol: str):
-    contract = Stock(symbol, 'SMART', 'USD')
-    ib.qualifyContracts(contract)
-    book = ib.reqMktDepth(contract)
-    ib.sleep(1)
-    data = [{'side': row.side, 'price': row.price, 'size': row.size} for row in book.domBids + book.domAsks]
-    ib.cancelMktDepth(contract)
-    return data
-
-@app.post("/order/place")
-def place_order(req: OrderRequest):
-    contract = Stock(req.symbol, req.exchange, req.currency)
-    ib.qualifyContracts(contract)
-    if req.orderType == 'LMT' and req.price is None:
-        raise HTTPException(status_code=400, detail="Limit order requires a price.")
-    order_class = LimitOrder if req.orderType == 'LMT' else MarketOrder
-    order = order_class(req.side.upper(), req.quantity, req.price) if req.orderType == 'LMT' else order_class(req.side.upper(), req.quantity)
-    trade = ib.placeOrder(contract, order)
-    ib.sleep(1)
-    return {
-        "orderId": trade.order.orderId,
-        "status": trade.orderStatus.status
-    }
-
-@app.get("/order/status/{order_id}")
-def get_order_status(order_id: int):
-    orders = ib.orders()
-    for o in orders:
-        if o.orderId == order_id:
-            return {
-                "orderId": o.orderId,
-                "status": o.orderStatus.status,
-                "filled": o.orderStatus.filled,
-                "remaining": o.orderStatus.remaining
-            }
-    raise HTTPException(status_code=404, detail="Order not found")
-
-@app.post("/order/cancel")
-def cancel_order(req: CancelRequest):
-    orders = ib.orders()
-    for o in orders:
-        if o.orderId == req.orderId:
-            ib.cancelOrder(o)
-            return {"status": "cancelled"}
-    raise HTTPException(status_code=404, detail="Order not found")
-
-@app.post("/order/sell")
-def place_sell_order(req: OrderRequest):
-    req.side = 'SELL'
-    return place_order(req)
-
-@app.get("/account/order_history")
-def get_order_history():
-    trades = ib.trades()
-    return [{
-        'orderId': t.order.orderId,
-        'symbol': t.contract.symbol,
-        'side': t.order.action,
-        'quantity': t.order.totalQuantity,
-        'filled': t.orderStatus.filled,
-        'status': t.orderStatus.status,
-        'price': t.order.lmtPrice if hasattr(t.order, 'lmtPrice') else None
-    } for t in trades]
-
-@app.get("/account/transactions")
-def get_transactions():
-    executions = ib.executions()
-    return [{
-        'execId': e.execId,
-        'symbol': e.contract.symbol,
-        'side': e.side,
-        'price': e.price,
-        'qty': e.shares,
-        'time': e.time.isoformat()
-    } for e in executions]
-'''
 
 
 

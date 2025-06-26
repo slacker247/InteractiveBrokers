@@ -9,36 +9,43 @@ class IBWorker(threading.Thread):
         self.ib = IB()
         self.requests = queue.Queue()
         self.daemon = True
+        self.running = False
 
     def run(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
-        self.ib.connect('127.0.0.1', 7497, clientId=123)
-        while True:
+        try:
+            self.ib.connect('127.0.0.1', 7497, clientId=123)
+        except Exception as ex:
+            print(ex)
+            
+        self.running = True
+        while self.running:
             method, args, response_q = self.requests.get()
+            print(*args)
             try:
                 if method == 'accountSummary':
-                    response = self.ib.accountSummary()
+                    response = self.ib.accountSummary(args[0])
                     response_q.put(response)
                 if method == 'positions':
                     response = self.ib.positions()
                     response_q.put(response)
                 if method == 'reqContractDetails':
-                    response = self.ib.reqContractDetails(*args)
+                    response = self.ib.reqContractDetails(args[0])
                     response_q.put(response)
                 if method == 'reqMktData':
-                    response = self.ib.reqMktData(*args)
+                    response = self.ib.reqMktData(args[0], args[1], args[2], args[3])
                     response_q.put(response)
                 if method == 'qualifyContracts':
-                    response = self.ib.qualifyContracts(*args)
+                    response = self.ib.qualifyContracts(args[0])
                     response_q.put(response)
                 if method == 'placeOrder':
-                    response = self.ib.placeOrder(*args)
+                    response = self.ib.placeOrder(args[0], args[1])
                     response_q.put(response)
                 if method == 'reqOpenOrders':
                     response = self.ib.reqOpenOrders()
                     response_q.put(response)
                 if method == 'cancelOrder':
-                    response = self.ib.cancelOrder(*args)
+                    response = self.ib.cancelOrder(args[0])
                     response_q.put(response)
                 if method == 'reqGlobalCancel':
                     response = self.ib.reqGlobalCancel()
@@ -47,10 +54,10 @@ class IBWorker(threading.Thread):
                     response = self.ib.trades()
                     response_q.put(response)
                 if method == 'reqMatchingSymbols':
-                    response = self.ib.reqMatchingSymbols(*args)
+                    response = self.ib.reqMatchingSymbols(args[0])
                     response_q.put(response)
                 if method == 'reqHistoricalData':
-                    response = self.ib.reqHistoricalData(*args)
+                    response = self.ib.reqHistoricalData(args[0], args[1], args[2], args[3], args[4], args[5], args[6])
                     response_q.put(response)
             except Exception as e:
                 print(f"IBWorker - run - {e}")

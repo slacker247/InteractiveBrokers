@@ -9,6 +9,7 @@ import time
 import threading
 import asyncio
 import IBWorker
+import IBKRStatus
 # https://ib-insync.readthedocs.io/api.html
 from ib_insync import *
 import tracemalloc
@@ -98,7 +99,7 @@ def parse_account_summary(summary):
 
 def get_account_summary(account_id):
     summary = {}
-    summary = IBWorker.ib_worker.request('accountSummary')
+    summary = IBWorker.ib_worker.request('accountSummary', account_id)
     parsed = parse_account_summary(summary)
     return parsed
 
@@ -461,9 +462,9 @@ def format_search(match):
     }
 
 def search(symbol):
-    matches = IBWorker.ib_worker.request('reqMatchingSymbols', symbol)
-    #contract = Stock(symbol, 'SMART', 'USD')
-    #matches = IBWorker.ib_worker.request('reqContractDetails', contract)
+    #matches = IBWorker.ib_worker.request('reqMatchingSymbols', symbol)
+    contract = Stock(symbol, 'SMART', 'USD')
+    matches = IBWorker.ib_worker.request('reqContractDetails', contract)
 
     contracts = {}
     if matches == None:
@@ -544,22 +545,46 @@ def get_formatted_bars(conid, end_datetime, duration_str='1 D', bar_size='1 day'
     symbol = resolved_contract.symbol
     company_name = details[0].longName or symbol  # fallback to symbol if longName unavailable
 
+    # convert from web api format to TWS format
+    # durationStr (str) – Time span of all the bars. Examples: ‘60 S’, ‘30 D’, ‘13 W’, ‘6 M’, ‘10 Y’.
+    duration = duration_str[:1] + " " + duration_str[-1:].upper()
+    # barSizeSetting (str) – Time period of one bar. Must be one of: ‘1 secs’, ‘5 secs’, ‘10 secs’ 15 secs’, ‘30 secs’, ‘1 min’, ‘2 mins’, ‘3 mins’, ‘5 mins’, ‘10 mins’, ‘15 mins’, ‘20 mins’, ‘30 mins’, ‘1 hour’, ‘2 hours’, ‘3 hours’, ‘4 hours’, ‘8 hours’, ‘1 day’, ‘1 week’, ‘1 month’.
+    barSize = bar_size[:1] + " "
+    if bar_size[-1:] == "d":
+        barSize += "day"
+    if bar_size[-1:] == "w":
+        barSize += "week"
+    if bar_size[-1:] == "m":
+        barSize += "month"
+    if bar_size[-1:] == "min":
+        barSize += "min"
+
+    try:
+        parsed_datetime = datetime.strptime(end_datetime, "%Y%m%d-%H:%M:%S")
+        if parsed_datetime > datetime.now():
+            end_datetime = ""
+    except Exception:
+        pass
+
     bars = IBWorker.ib_worker.request('reqHistoricalData',
         resolved_contract,
-        endDateTime=end_datetime,
-        durationStr=duration_str,
-        barSizeSetting=bar_size,
-        whatToShow='TRADES',
-        useRTH=True,
-        formatDate=1
+        end_datetime,
+        duration,
+        barSize,
+        'TRADES',
+        True,
+        1
     )
 
     if not bars:
         return {}
 
     first_bar = bars[0]
-    start_time_str = first_bar.date.replace(' ', '-')
-    chart_pan_time = bars[-1].date.replace(' ', '-')
+    print(first_bar)
+    start_time_str = first_bar.date.strftime("%Y%m%d-hh:MM:ss")
+    start_time_str = start_time_str.replace("hh:MM:ss", "00:00:00")
+    chart_pan_time = bars[-1].date.strftime("%Y%m%d-hh:MM:ss")
+    chart_pan_time = chart_pan_time.replace("hh:MM:ss", "00:00:00")
     price_factor = 100
 
     result = {
@@ -585,7 +610,7 @@ def get_formatted_bars(conid, end_datetime, duration_str='1 D', bar_size='1 day'
         "travelTime": 48,
         "data": [
             {
-                "t": int(time.mktime(datetime.strptime(bar.date.split(' ')[0], "%Y%m%d").timetuple()) * 1000),
+                "t": int(time.mktime(bar.date.timetuple()) * 1000),
                 "o": bar.open,
                 "c": bar.close,
                 "h": bar.high,
@@ -619,147 +644,162 @@ def main():
 
 def processRequest(method, path, post_data):
     try:
-        line = inspect.currentframe().f_lineno
-        result = {"error": f"{line} - handler - processRequest - Failed to process request"}
-        if method == "GET":
-            if re.match(r"^/iserver/account/[^/]+/summary$", path):
-                account_id = path.split('/')[3]
-                result = get_account_summary(account_id)
-            elif re.match(r"^/portfolio/[^/]+/positions/\d+$", path):
-                url = path
-                if '?' in url:
-                    path, query = url.split('?', 1)
-                else:
-                    path, query = url, ''
+        if IBKRStatus.current_status != None and IBKRStatus.current_status['status_code'] < 2:
+            if IBWorker.ib_worker != None:
+                IBWorker.ib_worker.running = False
+                IBWorker.ib_worker.join(15)
+                IBWorker.ib_worker = None
+            raise Exception(f"[Not connected] System status degraded: {IBKRStatus.current_status['status_label']}")
+        else:
+            if IBWorker.ib_worker == None:
+                IBWorker.ib_worker = IBWorker.IBWorker()
+                IBWorker.ib_worker.start()
+        if IBWorker.ib_worker != None and IBWorker.ib_worker.running:
+            line = inspect.currentframe().f_lineno
+            result = {"error": f"{line} - handler - processRequest - Failed to process request"}
+            if method == "GET":
+                if re.match(r"^/iserver/account/[^/]+/summary$", path):
+                    account_id = path.split('/')[3]
+                    result = get_account_summary(account_id)
+                elif re.match(r"^/portfolio/[^/]+/positions/\d+$", path):
+                    url = path
+                    if '?' in url:
+                        path, query = url.split('?', 1)
+                    else:
+                        path, query = url, ''
 
-                # Extract accountId and pageId from path
-                m = re.match(r'^/portfolio/([^/]+)/positions/(\d+)$', path)
-                if not m:
-                    raise ValueError(f"URL path format invalid: {path}")
-                accountId, pageId = m.group(1), int(m.group(2))
+                    # Extract accountId and pageId from path
+                    m = re.match(r'^/portfolio/([^/]+)/positions/(\d+)$', path)
+                    if not m:
+                        raise ValueError(f"URL path format invalid: {path}")
+                    accountId, pageId = m.group(1), int(m.group(2))
 
-                # Parse query parameters into dict
-                params = {}
-                if query:
-                    for pair in query.split('&'):
-                        if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            params[k] = v
-                        else:
-                            params[pair] = ''
+                    # Parse query parameters into dict
+                    params = {}
+                    if query:
+                        for pair in query.split('&'):
+                            if '=' in pair:
+                                k, v = pair.split('=', 1)
+                                params[k] = v
+                            else:
+                                params[pair] = ''
 
-                model = params.get('model', None)
-                sort = params.get('sort', 'name')
-                direction = params.get('direction', 'a')
-                waitForSecDef = params.get('waitForSecDef', 'false').lower() == 'true'
-                positions = get_positions(accountId, pageId, model, sort, direction, waitForSecDef)
-                result = positions
-            elif re.match(r"^/iserver/account/orders", path):
-                url = path
-                if '?' in url:
-                    path, query = url.split('?', 1)
-                else:
-                    path, query = url, ''
+                    model = params.get('model', None)
+                    sort = params.get('sort', 'name')
+                    direction = params.get('direction', 'a')
+                    waitForSecDef = params.get('waitForSecDef', 'false').lower() == 'true'
+                    positions = get_positions(accountId, pageId, model, sort, direction, waitForSecDef)
+                    result = positions
+                elif re.match(r"^/iserver/account/orders", path):
+                    url = path
+                    if '?' in url:
+                        path, query = url.split('?', 1)
+                    else:
+                        path, query = url, ''
 
-                params = {}
-                if query:
-                    for pair in query.split('&'):
-                        if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            params[k] = v
-                        else:
-                            params[pair] = ''
+                    params = {}
+                    if query:
+                        for pair in query.split('&'):
+                            if '=' in pair:
+                                k, v = pair.split('=', 1)
+                                params[k] = v
+                            else:
+                                params[pair] = ''
 
-                filters = params.get('filters', [])
-                if "," in filters:
-                    filters = filters.split(",")
-                force = params.get('force', False)
-                account_id = params.get('accountId', None)
-                result = get_orders(filters, force, account_id)
-            elif re.match(r"^/iserver/account/order/status/\d+$", path):
-                order_id = extract_order_id(url)
-                result = get_order_status(order_id)
-                if result:
-                    result = result
-                else:
+                    filters = params.get('filters', [])
+                    if "," in filters:
+                        filters = filters.split(",")
+                    force = params.get('force', False)
+                    account_id = params.get('accountId', None)
+                    result = get_orders(filters, force, account_id)
+                elif re.match(r"^/iserver/account/order/status/\d+$", path):
+                    order_id = extract_order_id(url)
+                    result = get_order_status(order_id)
+                    if result:
+                        result = result
+                    else:
+                        line = inspect.currentframe().f_lineno
+                        result = {"error": f"{line} - handler - processRequest - Order not found"}
+                elif re.match(r"^/iserver/secdef/search\?symbol=\w+", path):
+                    url = path
+                    if '?' in url:
+                        path, query = url.split('?', 1)
+                    else:
+                        path, query = url, ''
+
+                    params = {}
+                    if query:
+                        for pair in query.split('&'):
+                            if '=' in pair:
+                                k, v = pair.split('=', 1)
+                                params[k] = v
+                            else:
+                                params[pair] = ''
+                        result = search(params["symbol"])
+                    pass
+                elif re.match(r"^/iserver/marketdata/history", path):
+                    url = path
+                    if '?' in url:
+                        path, query = url.split('?', 1)
+                    else:
+                        path, query = url, ''
+
+                    params = {}
+                    if query:
+                        for pair in query.split('&'):
+                            if '=' in pair:
+                                k, v = pair.split('=', 1)
+                                params[k] = v
+                            else:
+                                params[pair] = ''
+                        conid = params["conid"]
+                        duration_str = params["period"]
+                        bar_size = params["bar"]
+                        end_datetime = params["startTime"]
+                        result = get_formatted_bars(conid, end_datetime, duration_str, bar_size)
+                    pass
+                elif re.match(r"^/trsrv/secdef", path):
+                    url = path
+                    if '?' in url:
+                        path, query = url.split('?', 1)
+                    else:
+                        path, query = url, ''
+
+                    params = {}
+                    if query:
+                        for pair in query.split('&'):
+                            if '=' in pair:
+                                k, v = pair.split('=', 1)
+                                params[k] = v
+                            else:
+                                params[pair] = ''
+                    conid = params["conids"]
+                    result = contractLookup(conid)
+            elif method == "POST":
+                if re.match(r"^/iserver/account/[^/]+/orders$", path):
+                    account_id = path.split('/')[3]
+                    jsn = json.loads(post_data)
+                    result = post_order(account_id, jsn)
+                elif path == "/pa/transactions":
+                    #result = handle_pa_transaction(post_data)
                     line = inspect.currentframe().f_lineno
-                    result = {"error": f"{line} - handler - processRequest - Order not found"}
-            elif re.match(r"^/iserver/secdef/search\?symbol=\w+", path):
-                url = path
-                if '?' in url:
-                    path, query = url.split('?', 1)
-                else:
-                    path, query = url, ''
-
-                params = {}
-                if query:
-                    for pair in query.split('&'):
-                        if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            params[k] = v
-                        else:
-                            params[pair] = ''
-                    result = search(params["symbol"])
-                pass
-            elif re.match(r"^/iserver/marketdata/history", path):
-                url = path
-                if '?' in url:
-                    path, query = url.split('?', 1)
-                else:
-                    path, query = url, ''
-
-                params = {}
-                if query:
-                    for pair in query.split('&'):
-                        if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            params[k] = v
-                        else:
-                            params[pair] = ''
-                    conid = params["conid"]
-                    duration_str = params["period"]
-                    bar_size = params["bar"]
-                    end_datetime = params["startTime"]
-                    result = get_formatted_bars(conid, end_datetime, duration_str, bar_size)
-                pass
-            elif re.match(r"^/trsrv/secdef", path):
-                url = path
-                if '?' in url:
-                    path, query = url.split('?', 1)
-                else:
-                    path, query = url, ''
-
-                params = {}
-                if query:
-                    for pair in query.split('&'):
-                        if '=' in pair:
-                            k, v = pair.split('=', 1)
-                            params[k] = v
-                        else:
-                            params[pair] = ''
-                conid = params["conids"]
-                result = contractLookup(conid)
-        elif method == "POST":
-            if re.match(r"^/iserver/account/[^/]+/orders$", path):
-                account_id = path.split('/')[3]
-                jsn = json.loads(post_data)
-                result = post_order(account_id, jsn)
-            elif path == "/pa/transactions":
-                #result = handle_pa_transaction(post_data)
+                    result = {"error": f"{line} - handler - processRequest - Unsupported method"}
+            elif method == "DELETE":
+                if re.match(r"^/iserver/account/[^/]+/order/\d+$", path):
+                    parts = path.split('/')
+                    result = delete_order(parts[3], int(parts[5]))
+            else:
                 line = inspect.currentframe().f_lineno
                 result = {"error": f"{line} - handler - processRequest - Unsupported method"}
-        elif method == "DELETE":
-            if re.match(r"^/iserver/account/[^/]+/order/\d+$", path):
-                parts = path.split('/')
-                result = delete_order(parts[3], int(parts[5]))
         else:
             line = inspect.currentframe().f_lineno
-            result = {"error": f"{line} - handler - processRequest - Unsupported method"}
+            result = {"error": f"{line} - handler - processRequest - Not Connected"}
     except Exception as e:
-        #print(full_stack())
+        print(full_stack())
         line = inspect.currentframe().f_lineno
         result = {"error": f"{line} - handler - processRequest - {e}"}
 
+    print(result)
     return json.dumps(result)
 
 def handle_client(conn, addr):

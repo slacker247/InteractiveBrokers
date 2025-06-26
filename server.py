@@ -6,6 +6,8 @@ import socket
 import json
 import subprocess
 import ssl
+import psutil
+import datetime
 
 HOST = 'localhost'
 PORT = 8080
@@ -98,13 +100,42 @@ def command(cmd, work_dir=None, showOutput=False):
     exitCode = process.returncode
     return syms, err, exitCode
 
+def startHandler():
+    procs = []
+    # Find a process by name
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        if proc.info['name'] == "python.exe" and "handler.py" in proc.info["cmdline"]:
+            procs.append(proc)
+    if len(procs) > 0:
+        proc = procs[0]
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+            print(f"Terminated: {proc.info}")
+        except psutil.TimeoutExpired:
+            print(f"Timeout - killing: {proc.info}")
+            proc.kill()
+
+        dt = datetime.datetime.now()
+        print(f"{dt} - starting server.py...")
+        subprocess.Popen(
+            'start "handler.py" python -u handler.py',
+            cwd="C:\\projects\\InteractiveBrokers\\",
+            shell=True
+        )
+
+
 class AccountSummaryHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
             # Request summary (blocking call)
             response = send_to_backend("GET", self.path, [])
-            self.send_response(200)
+            if "Not connected" in response:
+                self.send_response(503)
+                startHandler()
+            else:
+                self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(response)))
             self.end_headers()
@@ -125,7 +156,11 @@ class AccountSummaryHandler(BaseHTTPRequestHandler):
         try:
             # Request summary (blocking call)
             response = send_to_backend("POST", self.path, field_data)
-            self.send_response(200)
+            if "Not connected" in response:
+                self.send_response(503)
+                startHandler()
+            else:
+                self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(response)))
             self.end_headers()
@@ -143,7 +178,11 @@ class AccountSummaryHandler(BaseHTTPRequestHandler):
         try:
             # Request summary (blocking call)
             response = send_to_backend("DELETE", self.path, [])
-            self.send_response(200)
+            if "Not connected" in response:
+                self.send_response(503)
+                startHandler()
+            else:
+                self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Content-Length', str(len(response)))
             self.end_headers()

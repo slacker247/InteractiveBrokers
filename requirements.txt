@@ -12,3 +12,5 @@ pywinauto
 pywin32
 
 psutil
+
+beautifulsoup4

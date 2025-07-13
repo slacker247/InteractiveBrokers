@@ -1,113 +1,146 @@
 import subprocess
-import datetime
 import time
 import psutil
+import win32gui
+import win32process
 import pygetwindow as gw
 from pywinauto.application import Application
 from pywinauto.keyboard import send_keys
+import os
+import sys
 
-# DETACHED_PROCESS and CREATE_NEW_PROCESS_GROUP flags
-DETACHED_PROCESS = 0x00000008
-CREATE_NEW_PROCESS_GROUP = 0x00000200
+TWS_PATH = "C:\\IBKR\\tws.exe"
+TWS_WORKDIR = "C:\\IBKR"
+SECRETS_FILE = "secrets.ini"
+SERVER_SCRIPT = "C:\\projects\\InteractiveBrokers\\handler.py"
+
+LOGIN_TITLE = "Login"
+MAIN_WINDOW_KEYWORD = "Interactive Brokers"
+RECONNECT_DIALOG_KEYWORD = "Trying to reconnect"
+
 
 def stop_process(proc):
-    proc.terminate()
     try:
-        proc.wait(timeout=3)
-        print(f"Terminated: {proc.info}")
+        proc.terminate()
+        proc.wait(timeout=5)
+        print(f"[INFO] Terminated: {proc.info}")
     except psutil.TimeoutExpired:
-        print(f"Timeout - killing: {proc.info}")
+        print(f"[WARN] Timeout - killing: {proc.info}")
         proc.kill()
 
-def find_process(target_name):
-    procs = []
-    # Find a process by name
+def find_process(name, cmd_contains=None):
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-        if proc.info['name'] == target_name:
-            procs.append(proc)
-    return procs
+        if proc.info['name'] == name:
+            if cmd_contains:
+                if any(cmd_contains in str(arg) for arg in proc.info['cmdline']):
+                    return proc
+            else:
+                return proc
+    return None
 
-def read_name_value_file(filename):
+def enum_windows_for_exe(exe_name):
+    # Get all PIDs for the given executable
+    matching_pids = [p.pid for p in psutil.process_iter(['name']) if p.info['name'] == exe_name]
+
+    windows = []
+
+    def callback(hwnd, extra):
+        if win32gui.IsWindowVisible(hwnd) and win32gui.GetWindowText(hwnd):
+            try:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                if pid in matching_pids:
+                    title = win32gui.GetWindowText(hwnd)
+                    windows.append((hwnd, title))
+            except:
+                pass
+
+    win32gui.EnumWindows(callback, None)
+    return windows
+
+def read_settings_file(filename):
     data = {}
     with open(filename, 'r') as f:
         for line in f:
-            line = line.strip()
-            if not line or '=' not in line:
-                continue  # Skip empty or malformed lines
-            key, value = line.split('=', 1)
-            data[key.strip()] = value.strip()
+            if '=' in line:
+                key, value = line.strip().split('=', 1)
+                data[key.strip()] = value.strip()
     return data
 
-def launch_tws():
-    # Step 1: Launch the program
+def launch_server():
+    if not os.path.exists(SERVER_SCRIPT):
+        print(f"[ERROR] handler.py not found at {SERVER_SCRIPT}")
+        return
+
+    proc = find_process("python.exe", cmd_contains="handler.py")
+    if proc:
+        print("[INFO] handler.py already running. No action taken.")
+        return
+
+    print("[INFO] Launching handler.py...")
     subprocess.Popen(
-        args="C:\\IBKR\\tws.exe -J-DjtsConfigDir=\"C:\\IBKR\"",
-        cwd="C:\\IBKR"
+        'start "handler.py" python -u handler.py',
+        cwd="C:\\projects\\InteractiveBrokers\\",
+        shell=True
     )
 
-    # Step 2: Wait for the window to appear
-    time.sleep(15)  # Adjust based on app launch time
+def stop_server():
+    proc = find_process("python.exe", cmd_contains="handler.py")
+    if proc:
+        print(f"[INFO] Stopping handler.py with PID {proc.pid}...")
+        stop_process(proc)
+    else:
+        print("[INFO] handler.py not running.")
 
-    # Step 3: Find the window by title
-    win = None
-    for w in gw.getWindowsWithTitle("Login"):
-        win = w
-        break
+def monitor_tws():
+    state = "UNK"
+    proc = find_process("tws.exe")
+    if proc == None:
+        state = "Not Running"
+    else:
+        windows = enum_windows_for_exe("tws.exe")
+        for hwnd, title in windows:
+            if title == "Login":
+                state = "Login"
+            if MAIN_WINDOW_KEYWORD in title:
+                state = "Running"
+            #print(f"[DEBUG] window title: {title}")
 
-    if not win:
-        raise RuntimeError("Interactive Brokers window not found")
+    if state == "Not Running":
+        print("[INFO] Launching TWS...")
+        subprocess.Popen(
+            args=[TWS_PATH, '-J-DjtsConfigDir=C:\\IBKR'],
+            cwd=TWS_WORKDIR,
+        )
+    if state == "Login":
+        try:
+            app = Application(backend="uia").connect(title_re=LOGIN_TITLE)
+            app_window = app.window(title_re=LOGIN_TITLE)
+            app_window.set_focus()
+            creds = read_settings_file(SECRETS_FILE)
+            send_keys(creds["username"], with_spaces=True)
+            time.sleep(1)
+            send_keys('{TAB}')
+            time.sleep(1)
+            send_keys(creds["password"], with_spaces=True)
+            time.sleep(1)
+            send_keys('{ENTER}')
+            print("[INFO] Login submitted.")
+            time.sleep(60)
+        except Exception as e:
+            print(f"[ERROR] Login automation failed: {e}")
 
-    # Step 4: Connect to the window using pywinauto
-    app = Application(backend="uia").connect(title_re="Login")
-    app_window = app.window(title_re="Login")
-
-    # Step 5: Bring the window to front
-    app_window.set_focus()
-
-    settings = read_name_value_file("secrets.ini")
-    # Step 6: Send keys
-    send_keys(settings["username"], with_spaces=True)
-    time.sleep(1)
-    send_keys('{TAB}')
-    time.sleep(1)
-    send_keys(settings["password"], with_spaces=True)
-    time.sleep(1)
-    send_keys('{ENTER}')
+    if state == "Running":
+        launch_server()
+        pass
+    else:
+        print("[WARN] Stopping handler.py...")
+        stop_server()
 
 if __name__ == "__main__":
-    last_seen = datetime.datetime(1970, 1, 1)
-
+    stop_server()
     while True:
-        dt = datetime.datetime.now()
-        print(f"{dt} - check for tws.exe...")
-        procs = find_process("tws.exe")
-        if len(procs) > 0:
-            last_seen = datetime.datetime.now()
-        else:
-            dt = datetime.datetime.now()
-            print(f"{dt} - check for python.exe server.py...")
-            p2 = find_process("python.exe")
-            p1 = None
-            for p in p2:
-                if "server.py" in p.info["cmdline"]:
-                    p1 = p
-            if p1 != None:
-                dt = datetime.datetime.now()
-                print(f"{dt} - stopping server.py...")
-                stop_process(p1)
-            pass
-        delta = datetime.datetime.now() - last_seen
-        if delta > datetime.timedelta(minutes=30):
-            dt = datetime.datetime.now()
-            print(f"{dt} - starting tws.exe...")
-            launch_tws()
-
-            print(f"{dt} - starting server.py...")
-            #subprocess.Popen(
-            #    'start "server.py" python -u server.py',
-            #    cwd="C:\\projects\\InteractiveBrokers\\",
-            #    shell=True
-            #)
-
+        monitor_tws()
         time.sleep(60)
+
+
 

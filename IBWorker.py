@@ -8,21 +8,35 @@ class IBWorker(threading.Thread):
         super().__init__()
         self.ib = IB()
         self.requests = queue.Queue()
+        self.error_messages = queue.Queue()  # Captured error messages
         self.daemon = True
         self.running = False
+        self.ib.errorEvent += self.on_error  # Attach error handler
+
+    def on_error(self, reqId, errorCode, errorString, contract):
+        """Store errors in a thread-safe queue."""
+        self.error_messages.put({
+            'reqId': reqId,
+            'errorCode': errorCode,
+            'errorString': errorString,
+            'contract': contract
+        })
 
     def run(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
         try:
             self.ib.connect('127.0.0.1', 7497, clientId=123)
+            self.running = True
         except Exception as ex:
             print(ex)
-            
-        self.running = True
+            self.error_messages.put({'error': str(ex)})
+            return  # Exit thread if unable to connect
+
         while self.running:
             method, args, response_q = self.requests.get()
             print(*args)
             try:
+                response = None
                 if method == 'accountSummary':
                     response = self.ib.accountSummary(args[0])
                     response_q.put(response)
@@ -59,9 +73,12 @@ class IBWorker(threading.Thread):
                 if method == 'reqHistoricalData':
                     response = self.ib.reqHistoricalData(args[0], args[1], args[2], args[3], args[4], args[5], args[6])
                     response_q.put(response)
+                if response == None:
+                    raise ValueError(f"Unknown method: {method}")
             except Exception as e:
                 print(f"IBWorker - run - {e}")
                 print(args)
+                self.error_messages.put({'error': str(e), 'args': args})
                 response_q.put(e)
 
     def request(self, method, *args):
@@ -71,6 +88,13 @@ class IBWorker(threading.Thread):
         if isinstance(result, Exception):
             raise result
         return result
+
+    def get_errors(self):
+        """Retrieve all pending errors."""
+        errors = []
+        while not self.error_messages.empty():
+            errors.append(self.error_messages.get())
+        return errors
 
 ib_worker = IBWorker()
 ib_worker.start()

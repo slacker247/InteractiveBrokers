@@ -18,6 +18,29 @@ ib = None
 server_socket = None
 threads = []
 
+class Result:
+    def __init__(self):
+        """
+        :param success: Bool indicating if the operation succeeded.
+        :param data: The successful result (any type, usually dict or list).
+        :param error: Error message or error details if failed.
+        """
+        self.success = True
+        self.data = {}
+        self.errors = []
+
+    def to_dict(self):
+        """Return as a plain dictionary."""
+        return {
+            'success': self.success,
+            'data': self.data,
+            'errors': self.errors
+        }
+
+    def to_json(self):
+        """Return as JSON string."""
+        return json.dumps(self.to_dict(), default=str)
+    
 def shutdown(signum, frame):
     global server_socket, threads
     print("\nShutting down gracefully...")
@@ -643,24 +666,25 @@ def main():
     print(jsn)
 
 def processRequest(method, path, post_data):
+    result = Result()
     try:
-        if IBKRStatus.current_status != None and IBKRStatus.current_status['status_code'] < 2:
-            if IBWorker.ib_worker != None:
-                IBWorker.ib_worker.running = False
-                IBWorker.ib_worker.join(15)
-                IBWorker.ib_worker = None
-            raise Exception(f"[Not connected] System status degraded: {IBKRStatus.current_status['status_label']}")
-        else:
-            if IBWorker.ib_worker == None:
-                IBWorker.ib_worker = IBWorker.IBWorker()
-                IBWorker.ib_worker.start()
+        #if IBKRStatus.current_status != None and IBKRStatus.current_status['status_code'] < 2:
+        #    if IBWorker.ib_worker != None:
+        #        IBWorker.ib_worker.running = False
+        #        IBWorker.ib_worker.join(15)
+        #        IBWorker.ib_worker = None
+        #    raise Exception(f"[Not connected] System status degraded: {IBKRStatus.current_status['status_label']}")
+        #else:
+        if IBWorker.ib_worker.running == False:
+            IBWorker.ib_worker = None
+        if IBWorker.ib_worker == None:
+            IBWorker.ib_worker = IBWorker.IBWorker()
+            IBWorker.ib_worker.start()
         if IBWorker.ib_worker != None and IBWorker.ib_worker.running:
-            line = inspect.currentframe().f_lineno
-            result = {"error": f"{line} - handler - processRequest - Failed to process request"}
             if method == "GET":
                 if re.match(r"^/iserver/account/[^/]+/summary$", path):
                     account_id = path.split('/')[3]
-                    result = get_account_summary(account_id)
+                    result.data = get_account_summary(account_id)
                 elif re.match(r"^/portfolio/[^/]+/positions/\d+$", path):
                     url = path
                     if '?' in url:
@@ -689,7 +713,7 @@ def processRequest(method, path, post_data):
                     direction = params.get('direction', 'a')
                     waitForSecDef = params.get('waitForSecDef', 'false').lower() == 'true'
                     positions = get_positions(accountId, pageId, model, sort, direction, waitForSecDef)
-                    result = positions
+                    result.data = positions
                 elif re.match(r"^/iserver/account/orders", path):
                     url = path
                     if '?' in url:
@@ -711,15 +735,15 @@ def processRequest(method, path, post_data):
                         filters = filters.split(",")
                     force = params.get('force', False)
                     account_id = params.get('accountId', None)
-                    result = get_orders(filters, force, account_id)
+                    result.data = get_orders(filters, force, account_id)
                 elif re.match(r"^/iserver/account/order/status/\d+$", path):
                     order_id = extract_order_id(url)
-                    result = get_order_status(order_id)
-                    if result:
-                        result = result
+                    result.data = get_order_status(order_id)
+                    if result.data:
+                        pass
                     else:
                         line = inspect.currentframe().f_lineno
-                        result = {"error": f"{line} - handler - processRequest - Order not found"}
+                        result.errors.append(f"{line} - handler - processRequest - Order not found")
                 elif re.match(r"^/iserver/secdef/search\?symbol=\w+", path):
                     url = path
                     if '?' in url:
@@ -735,7 +759,7 @@ def processRequest(method, path, post_data):
                                 params[k] = v
                             else:
                                 params[pair] = ''
-                        result = search(params["symbol"])
+                        result.data = search(params["symbol"])
                     pass
                 elif re.match(r"^/iserver/marketdata/history", path):
                     url = path
@@ -756,7 +780,7 @@ def processRequest(method, path, post_data):
                         duration_str = params["period"]
                         bar_size = params["bar"]
                         end_datetime = params["startTime"]
-                        result = get_formatted_bars(conid, end_datetime, duration_str, bar_size)
+                        result.data = get_formatted_bars(conid, end_datetime, duration_str, bar_size)
                     pass
                 elif re.match(r"^/trsrv/secdef", path):
                     url = path
@@ -774,33 +798,34 @@ def processRequest(method, path, post_data):
                             else:
                                 params[pair] = ''
                     conid = params["conids"]
-                    result = contractLookup(conid)
+                    result.data = contractLookup(conid)
             elif method == "POST":
                 if re.match(r"^/iserver/account/[^/]+/orders$", path):
                     account_id = path.split('/')[3]
                     jsn = json.loads(post_data)
-                    result = post_order(account_id, jsn)
+                    result.data = post_order(account_id, jsn)
                 elif path == "/pa/transactions":
-                    #result = handle_pa_transaction(post_data)
+                    #result.data = handle_pa_transaction(post_data)
                     line = inspect.currentframe().f_lineno
-                    result = {"error": f"{line} - handler - processRequest - Unsupported method"}
+                    result.data = {"error": f"{line} - handler - processRequest - Unsupported method"}
             elif method == "DELETE":
                 if re.match(r"^/iserver/account/[^/]+/order/\d+$", path):
                     parts = path.split('/')
-                    result = delete_order(parts[3], int(parts[5]))
+                    result.data = delete_order(parts[3], int(parts[5]))
             else:
                 line = inspect.currentframe().f_lineno
-                result = {"error": f"{line} - handler - processRequest - Unsupported method"}
+                result.errors.append(f"{line} - handler - processRequest - Unsupported method")
         else:
             line = inspect.currentframe().f_lineno
-            result = {"error": f"{line} - handler - processRequest - Not Connected"}
+            result.errors.append(f"{line} - handler - processRequest - Not Connected")
+        
     except Exception as e:
         print(full_stack())
         line = inspect.currentframe().f_lineno
-        result = {"error": f"{line} - handler - processRequest - {e}"}
+        result.errors.append(f"{line} - handler - processRequest - {e}")
 
-    print(result)
-    return json.dumps(result)
+    print(result.to_dict())
+    return result.to_json()
 
 def handle_client(conn, addr):
     try:

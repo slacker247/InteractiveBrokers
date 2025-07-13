@@ -53,8 +53,7 @@ def send_to_backend(action, path, data):
 
         full_msg = "".join(chunks)
         jsn = json.loads(full_msg.strip())
-        response = json.dumps(jsn)
-        return response
+        return jsn
 
 def cmdWrapper(action, path, data):
     with open("post.json", "w") as f:
@@ -127,19 +126,23 @@ def startHandler():
 
 class AccountSummaryHandler(BaseHTTPRequestHandler):
 
-    def do_GET(self):
+    def callBackend(self, action, data):
         try:
             # Request summary (blocking call)
-            response = send_to_backend("GET", self.path, [])
-            if "Not connected" in response:
+            jsn = send_to_backend(action, self.path, data)
+            if "Not connected" in str(jsn):
                 self.send_response(503)
                 startHandler()
             else:
                 self.send_response(200)
+            if len(jsn["errors"]) > 0:
+                raise Exception(jsn["errors"])
+            data = json.dumps(jsn["data"])
             self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response)))
+            self.send_header('Content-Length', str(len(data)))
             self.end_headers()
-            self.wfile.write(bytes(response, "utf-8"))
+            print(data)
+            self.wfile.write(bytes(data, "utf-8"))
 
         except Exception as e:
             print(full_stack())
@@ -148,53 +151,18 @@ class AccountSummaryHandler(BaseHTTPRequestHandler):
             self.end_headers()
             error_msg = json.dumps({'error': str(e)}).encode('utf-8')
             self.wfile.write(error_msg)
+
+
+    def do_GET(self):
+        self.callBackend("GET", [])
 
     def do_POST(self):
         length = int(self.headers['content-length'])
         field_data = self.rfile.read(length).decode("utf-8")
-
-        try:
-            # Request summary (blocking call)
-            response = send_to_backend("POST", self.path, field_data)
-            if "Not connected" in response:
-                self.send_response(503)
-                startHandler()
-            else:
-                self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response)))
-            self.end_headers()
-            self.wfile.write(bytes(response, "utf-8"))
-
-        except Exception as e:
-            print(full_stack())
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            error_msg = json.dumps({'error': str(e)}).encode('utf-8')
-            self.wfile.write(error_msg)
+        self.callBackend("POST", field_data)
 
     def do_DELETE(self):
-        try:
-            # Request summary (blocking call)
-            response = send_to_backend("DELETE", self.path, [])
-            if "Not connected" in response:
-                self.send_response(503)
-                startHandler()
-            else:
-                self.send_response(200)
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(response)))
-            self.end_headers()
-            self.wfile.write(bytes(response, "utf-8"))
-
-        except Exception as e:
-            print(full_stack())
-            self.send_response(500)
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            error_msg = json.dumps({'error': str(e)}).encode('utf-8')
-            self.wfile.write(error_msg)
+        self.callBackend("DETETE", [])
 
 def run_server():
     HOST = extract_ip()

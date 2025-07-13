@@ -73,7 +73,6 @@ def launch_server():
 
     proc = find_process("python.exe", cmd_contains="handler.py")
     if proc:
-        print("[INFO] handler.py already running. No action taken.")
         return
 
     print("[INFO] Launching handler.py...")
@@ -137,7 +136,6 @@ def monitor_tws():
         stop_server()
 
 if __name__ == "__main__":
-    stop_server()
     while True:
         monitor_tws()
         time.sleep(60)
